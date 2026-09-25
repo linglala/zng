@@ -31,6 +31,13 @@ function db() {
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_events_token ON events(token)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_events_ip ON events(ip)');
     $pdo->exec('CREATE TABLE IF NOT EXISTS state (k TEXT PRIMARY KEY, v TEXT)');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS bl_tokens (token TEXT PRIMARY KEY, note TEXT, ts INTEGER)');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS bl_accounts (email TEXT PRIMARY KEY, note TEXT, ts INTEGER)');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS bl_ips (ip TEXT PRIMARY KEY, note TEXT, ts INTEGER)');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS wl_tokens (token TEXT PRIMARY KEY, note TEXT, ts INTEGER)');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS wl_ips (ip TEXT PRIMARY KEY, note TEXT, ts INTEGER)');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS plan_locks (user_id INTEGER PRIMARY KEY, plan_id INTEGER, note TEXT, ts INTEGER)');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS actions (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, user_id INTEGER, email TEXT, token TEXT, action TEXT, detail TEXT, status TEXT, reverted INTEGER DEFAULT 0)');
     return $pdo;
 }
 
@@ -76,17 +83,26 @@ function parse_line($line) {
 }
 
 function detect_reason($ua) {
-    foreach (cfg()['abnormal_ua'] as $p) {
+    $patterns = cfg()['abnormal_ua'];
+    $j = state_get('guard_config');
+    if ($j) {
+        $g = json_decode($j, true);
+        if (!empty($g['custom_ua'])) {
+            foreach (preg_split('/[\r\n]+/', $g['custom_ua']) as $p) {
+                $p = trim($p);
+                if ($p !== '') $patterns[] = $p;
+            }
+        }
+    }
+    foreach ($patterns as $p) {
         if (stripos($ua, $p) !== false) return 'abnormal_ua:' . $p;
     }
     return '';
 }
 
 
-/** 智能时间格式：今天只显示 H:i:s，跨天显示 m-d H:i */
 function fmt_time($ts) {
-    if (date('Ymd', $ts) === date('Ymd')) return fmt_time($ts);
-    return date('m-d H:i', $ts);
+    return date('m-d H:i:s', $ts);
 }
 
 function flush_batch($batch) {
@@ -106,7 +122,10 @@ function run_scan($full = false) {
 
     $inserted = 0; $scanned = 0;
     try {
-        foreach ($c['log_files'] as $path) {
+        $files = $c['log_files'];
+    $rj = state_get('remote_logs');
+    if ($rj) foreach (json_decode($rj, true) as $r) $files[] = $r['local'];
+    foreach (array_unique($files) as $path) {
             if (!is_readable($path)) continue;
             clearstatcache(true, $path);
             $size = filesize($path);
@@ -178,7 +197,7 @@ function api_stats() {
 
     // token 独立 IP 排行榜（前 50）
     $warn = $c['token_ip_warn'];
-    foreach ($pdo->query("SELECT token, COUNT(*) hits, COUNT(DISTINCT ip) ips, MIN(ts) first_ts, MAX(ts) last_ts FROM events WHERE ts >= $today GROUP BY token ORDER BY ips DESC, hits DESC LIMIT 50") as $r) {
+    foreach ($pdo->query("SELECT token, COUNT(*) hits, COUNT(DISTINCT CASE WHEN ip NOT IN (SELECT ip FROM wl_ips) THEN ip END) ips, MIN(ts) first_ts, MAX(ts) last_ts FROM events WHERE ts >= $today GROUP BY token ORDER BY ips DESC, hits DESC LIMIT 50") as $r) {
         $ua = $pdo->query("SELECT ua FROM events WHERE token = " . db()->quote($r['token']) . " GROUP BY ua ORDER BY COUNT(*) DESC LIMIT 1")->fetchColumn();
         $out['token_rank'][] = [
             'token' => $r['token'], 'hits' => (int)$r['hits'], 'ips' => (int)$r['ips'],
@@ -190,7 +209,7 @@ function api_stats() {
     // 可疑 IP：多拉 token / 异常UA多 / 高频
     $sql = "SELECT ip, COUNT(*) hits, COUNT(DISTINCT token) tokens,
                    SUM(CASE WHEN reason != '' THEN 1 ELSE 0 END) abnormal, MAX(ts) last_ts
-            FROM events WHERE ts >= $today GROUP BY ip
+            FROM events WHERE ts >= $today AND ip NOT IN (SELECT ip FROM wl_ips) GROUP BY ip
             HAVING tokens >= {$c['suspect_ip_tokens']} OR abnormal >= {$c['suspect_ip_abnormal']} OR hits >= {$c['suspect_ip_hits']}
             ORDER BY tokens DESC, abnormal DESC, hits DESC LIMIT 100";
     foreach ($pdo->query($sql) as $r) {

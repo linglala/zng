@@ -55,18 +55,18 @@ location /api/v1/client/subscribe {
 - **刚过零点数据归零**：统计窗口是最近 24 小时，不受自然日切换影响；如果库里总条数正常但列表空，看 db_range 时间范围是否覆盖。
 - **想清空重扫**：删掉 `data/subguard.db` 和 `data/subguard.db-wal` 即可
 
+## v1.4：auto_guard 处置中心
 
-## 用 Git 管理（推荐）
+可视化配置：自动移观察套餐 / 封禁 / 套餐锁 / 黑白名单 / 处置记录与撤销。前置：按 [TUNNEL.md](TUNNEL.md) 搭 SSH 隧道。
 
-```bash
-cd /www/wwwroot/你的站点目录
-git init
-git add .
-git commit -m "SubGuard v1.3"
-git remote add origin git@gitee.com:你的用户名/subguard.git   # 或 github
-git push -u origin master
-```
+## v1.5：全新后台界面
 
-注意：`config.php`（含密码）和 `data/`（SQLite 数据）已被 .gitignore 排除，不会进仓库。
+深色侧边栏布局，菜单：总览 / 处置中心 / 黑名单 / 白名单 / 套餐锁 / 处置记录 / 规则设置。全部时间带日期、排行榜支持按最新/最多排序、UA统计折叠、自定义UA黑名单（规则设置页配置即时生效）。
 
-**以后更新**：本仓库发了新版后，在站点目录执行 `git pull`，只会更新程序文件，你的配置和数据库原样保留。
+## v1.8 更新日志
+
+- **v1.8.3**（当前）：处置时同步推后 expired_at 防面板到期弹回；处置记录动作名中文化
+- v1.8.2：IP 白名单（自家出口豁免统计/引擎）；引擎卡片保存按钮+执行前自动保存；登录防爆破（5错锁10分）
+- v1.8.1：Token/邮箱黑名单改为"锁定套餐"（不封禁）
+- v1.8.0：触发即自动加套餐锁；IP黑名单支持CIDR段写法
+- v1.7：远程日志源（rsync 拉取 + 一键生成同步命令）；TG 通知

@@ -39,4 +39,15 @@ return [
     'suspect_ip_tokens' => 3,        // 单 IP 当天拉的 token 数 >= 此值进可疑名单
     'suspect_ip_abnormal' => 5,      // 单 IP 当天异常 UA 命中 >= 此值进可疑名单
     'suspect_ip_hits' => 80,         // 单 IP 当天请求 >= 此值进可疑名单
+
+    // ===== 面板库连接（auto_guard 用，需先搭 SSH 隧道，见 TUNNEL.md）=====
+    'panel_db' => [
+        'enabled' => false,              // 隧道搭好、MySQL 账号建好后改 true
+        'host' => '127.0.0.1',
+        'port' => 3307,                  // 隧道本地端口
+        'user' => 'subguard',
+        'pass' => '这里填你设置的MySQL密码',
+        'dbname' => '你的面板库名',
+        'table_prefix' => 'v2_',
+    ],
 ];
