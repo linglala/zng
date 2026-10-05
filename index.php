@@ -10,7 +10,8 @@ $fail_n = (int)state_get('loginfail:' . $lip, 0);
 if (time() < $lock_until) {
     $login_err = '失败次数过多，已锁定 ' . ceil(($lock_until - time()) / 60) . ' 分钟';
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pwd'])) {
-    if (hash_equals((string)$cfg['password'], (string)$_POST['pwd'])) {
+    $expect_user = (string)($cfg['username'] ?? 'admin');
+    if (hash_equals($expect_user, (string)($_POST['user'] ?? '')) && hash_equals((string)$cfg['password'], (string)$_POST['pwd'])) {
         state_set('loginfail:' . $lip, 0);
         $_SESSION['subguard_ok'] = 1;
         header('Location: index.php');
@@ -40,7 +41,8 @@ if (empty($_SESSION['subguard_ok'])) {
     </style></head><body>
     <form class="box" method="post">
         <h1>SubGuard</h1><p>订阅异常监控台</p>
-        <input type="password" name="pwd" placeholder="输入访问密码" autofocus>
+        <input type="text" name="user" placeholder="用户名" value="admin" autocomplete="username" style="margin-bottom:8px">
+        <input type="password" name="pwd" placeholder="密码" autofocus autocomplete="current-password">
         <button type="submit">进入</button>
         <?php if (!empty($login_err)) echo '<div class="err">', htmlspecialchars($login_err), '</div>'; ?>
     </form></body></html>
@@ -142,16 +144,17 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
 <body>
 
 <aside>
-    <div class="logo">SubGuard<span>订阅监控台 v1.5</span></div>
+    <div class="logo" id="logo-name"><?= htmlspecialchars(state_get('panel_name', 'SubGuard')) ?><span>订阅监控台</span></div>
     <nav id="nav">
         <a data-p="dash" class="on">📊 总览</a>
         <a data-p="logsrc">📥 日志源</a>
         <a data-p="guard">🛡 处置中心</a>
         <a data-p="bl">🚫 黑名单</a>
         <a data-p="wl">⚪ 白名单</a>
-        <a data-p="locks">🔒 套餐锁</a>
+        <a data-p="locks">🔒 蜜罐</a>
         <a data-p="acts">📝 处置记录</a>
         <a data-p="rules">⚙️ 规则设置</a>
+        <a data-p="sys">🔧 系统设置</a>
     </nav>
     <div class="ver">数据保留 <?= (int)$cfg['keep_days'] ?> 天</div>
 </aside>
@@ -178,7 +181,10 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
         <div class="card bad"><div class="n" id="c_ab">-</div><div class="l">异常 UA 请求</div></div>
         <div class="card"><div class="n" id="c_abtok">-</div><div class="l">涉异常 token 数</div></div>
         <div class="card"><div class="n" id="c_4xx">-</div><div class="l">4xx 探测</div></div>
+        <div class="card"><div class="n" id="c_acts">-</div><div class="l">24h 处置（已执行）</div></div>
+        <div class="card bad"><div class="n" id="c_locks">-</div><div class="l">套餐锁名单（待审核）</div></div>
     </div>
+    <div id="act_sum_bar" style="display:none;background:#fff;border:1px solid var(--border);border-radius:12px;padding:10px 16px;margin:-6px 0 16px;font-size:13px;color:var(--sub)"></div>
 
     <section class="sec">
         <h2>异常 UA 实时流 <span class="tag">命中爬虫/服务器/转换站 UA 的订阅拉取</span></h2>
@@ -283,24 +289,32 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
 
 <!-- ========== 黑名单 ========== -->
 <div class="page" id="page-bl">
+    <div class="card" style="margin-bottom:14px;display:flex;gap:8px;align-items:center">
+        <b style="margin-right:6px">搜索名单</b>
+        <input type="text" id="bl_q" placeholder="按值/备注过滤全部名单" style="width:260px" oninput="blRender()">
+        <span style="font-size:12px;color:var(--sub)">输入即过滤，五个名单同时筛</span>
+    </div>
     <div class="grid2">
         <div class="card">
             <b>Token 黑名单</b> <span class="pill orange">命中即锁定套餐</span><br><br>
             <textarea id="blt_in" rows="4" placeholder="一行一条，可附备注：&#10;ccbbb58512622172c04f549f994dcd23 转售号一号"></textarea>
-            <div style="margin-top:6px"><button class="btn2 pri" onclick="blAdd('bl_tokens','blt_in')">导入</button></div>
-            <table style="margin-top:10px"><thead><tr><th>Token</th><th>备注</th><th></th></tr></thead><tbody id="list-bl_tokens"></tbody></table>
+            <div style="margin-top:6px"><button class="btn2 pri" onclick="blAdd('bl_tokens','blt_in')">导入</button>
+                <button class="btn2" onclick="blExport('bl_tokens')">导出</button></div>
+            <table style="margin-top:10px"><thead><tr><th>Token</th><th>备注</th><th>加入时间</th><th></th></tr></thead><tbody id="list-bl_tokens"></tbody></table>
         </div>
         <div class="card">
             <b>账号黑名单（按邮箱）</b> <span class="pill orange">命中即锁定套餐</span><br><br>
             <textarea id="bla_in" rows="4" placeholder="一行一个邮箱：&#10;ruby13824234991@qq.com 内鬼一号"></textarea>
-            <div style="margin-top:6px"><button class="btn2 pri" onclick="blAdd('bl_accounts','bla_in')">导入</button></div>
-            <table style="margin-top:10px"><thead><tr><th>邮箱</th><th>备注</th><th></th></tr></thead><tbody id="list-bl_accounts"></tbody></table>
+            <div style="margin-top:6px"><button class="btn2 pri" onclick="blAdd('bl_accounts','bla_in')">导入</button>
+                <button class="btn2" onclick="blExport('bl_accounts')">导出</button></div>
+            <table style="margin-top:10px"><thead><tr><th>邮箱</th><th>备注</th><th>加入时间</th><th></th></tr></thead><tbody id="list-bl_accounts"></tbody></table>
         </div>
         <div class="card">
-            <b>IP 黑名单</b> <span class="pill orange">标记 + 观察</span><br><br>
+            <b>IP 黑名单</b> <span class="pill orange">命中即锁定套餐（支持CIDR段）</span><br><br>
             <textarea id="bli_in" rows="4" placeholder="一行一个IP：&#10;103.204.174.78 机房扫描&#10;45.88.42.62 转售fleet"></textarea>
-            <div style="margin-top:6px"><button class="btn2 pri" onclick="blAdd('bl_ips','bli_in')">导入</button></div>
-            <table style="margin-top:10px"><thead><tr><th>IP</th><th>备注</th><th></th></tr></thead><tbody id="list-bl_ips"></tbody></table>
+            <div style="margin-top:6px"><button class="btn2 pri" onclick="blAdd('bl_ips','bli_in')">导入</button>
+                <button class="btn2" onclick="blExport('bl_ips')">导出</button></div>
+            <table style="margin-top:10px"><thead><tr><th>IP</th><th>备注</th><th>加入时间</th><th></th></tr></thead><tbody id="list-bl_ips"></tbody></table>
         </div>
     </div>
 </div>
@@ -310,25 +324,32 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
     <div class="card">
         <b>Token 白名单</b> <span class="pill green">豁免处置</span> <span class="tag" style="color:var(--sub);font-size:11px">路由器用户、监控探活等误伤高发号放这里</span><br><br>
         <textarea id="wl_in" rows="4" placeholder="一行一个token：&#10;8e23b82fa17ff2dfda77fedf8a41ab1b 路由器用户"></textarea>
-        <div style="margin-top:6px"><button class="btn2 pri" onclick="blAdd('wl_tokens','wl_in')">导入</button></div>
-        <table style="margin-top:10px"><thead><tr><th>Token</th><th>备注</th><th></th></tr></thead><tbody id="list-wl_tokens"></tbody></table>
+        <div style="margin-top:6px"><button class="btn2 pri" onclick="blAdd('wl_tokens','wl_in')">导入</button>
+                <button class="btn2" onclick="blExport('wl_tokens')">导出</button></div>
+        <table style="margin-top:10px"><thead><tr><th>Token</th><th>备注</th><th>加入时间</th><th></th></tr></thead><tbody id="list-wl_tokens"></tbody></table>
     </div>
     <div class="card" style="margin-top:14px">
         <b>IP 白名单</b> <span class="pill green">自家出口/代理IP豁免</span> <span class="tag" style="color:var(--sub);font-size:11px">名单内IP不计入"单IP多Token"和"独立IP数"统计</span><br><br>
         <textarea id="wlip_in" rows="4" placeholder="一行一个IP：&#10;152.175.31.228 自家HK入口&#10;13.212.106.254 AWS入口1"></textarea>
-        <div style="margin-top:6px"><button class="btn2 pri" onclick="blAdd('wl_ips','wlip_in')">导入</button></div>
-        <table style="margin-top:10px"><thead><tr><th>IP</th><th>备注</th><th></th></tr></thead><tbody id="list-wl_ips"></tbody></table>
+        <div style="margin-top:6px"><button class="btn2 pri" onclick="blAdd('wl_ips','wlip_in')">导入</button>
+                <button class="btn2" onclick="blExport('wl_ips')">导出</button></div>
+        <table style="margin-top:10px"><thead><tr><th>IP</th><th>备注</th><th>加入时间</th><th></th></tr></thead><tbody id="list-wl_ips"></tbody></table>
     </div>
 </div>
 
 <!-- ========== 套餐锁 ========== -->
 <div class="page" id="page-locks">
     <div class="card">
-        <b>套餐锁</b> <span class="tag" style="color:var(--sub);font-size:11px">被锁用户无论购买什么套餐，都会被自动拉回指定套餐</span><br><br>
+        <b>套餐锁</b> <span class="tag" style="color:var(--sub);font-size:11px">被收押用户无论购买什么套餐，都会被自动拉回蜜罐</span><br><br>
         <input type="text" id="lock_input" placeholder="用户邮箱或ID" style="width:200px">
         <input type="number" id="lock_plan" placeholder="锁定套餐ID" style="width:120px">
         <input type="text" id="lock_note" placeholder="备注(可选)" style="width:150px">
         <button class="btn2 pri" onclick="lockAdd()">加锁</button>
+        <span style="float:right;display:flex;gap:6px">
+            <input type="text" id="lock_q" placeholder="搜邮箱/ID/备注" style="width:200px" onkeydown="if(event.key==='Enter')locksSearch()">
+            <button class="btn2" onclick="locksSearch()">搜索</button>
+            <button class="btn2" onclick="document.getElementById('lock_q').value='';locksLoad()">重置</button>
+        </span>
         <span id="lock_msg" style="font-size:12px;color:var(--sub)"></span>
         <table style="margin-top:12px"><thead><tr><th>用户</th><th>锁定套餐</th><th>备注</th><th>加锁时间</th><th></th></tr></thead><tbody id="lock_list"></tbody></table>
     </div>
@@ -337,8 +358,20 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
 <!-- ========== 处置记录 ========== -->
 <div class="page" id="page-acts">
     <section class="sec">
-        <h2>处置记录 <span class="tag">dry=干跑 done=已执行 rev=已撤销</span></h2>
-        <table><thead><tr><th>时间</th><th>账号</th><th>动作</th><th>详情</th><th>状态</th><th></th></tr></thead><tbody id="act_list"></tbody></table>
+        <h2>处置记录 <span class="tag">dry=干跑 done=已执行 rev=已撤销</span>
+            <span style="margin-left:auto;display:flex;gap:6px">
+                <input type="text" id="act_q" placeholder="搜账号/邮箱/token/原因" style="width:220px" onkeydown="if(event.key==='Enter')actionsSearch()">
+                <button class="btn2" onclick="actionsSearch()">搜索</button>
+                <button class="btn2" onclick="document.getElementById('act_q').value='';actionsLoad()">重置</button>
+            </span></h2>
+        <div style="padding:10px 16px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border)">
+            <label class="ck"><input type="checkbox" id="act_all" onchange="actToggleAll(this.checked)"> 全选本页</label>
+            <button class="btn2" style="color:var(--red);border-color:#fecaca" onclick="actBatchDel()">删除所选</button>
+            <span id="act_pageinfo" style="margin-left:auto;font-size:12px;color:var(--sub)"></span>
+            <button class="btn2" onclick="actPageGo(-1)">‹ 上一页</button>
+            <button class="btn2" onclick="actPageGo(1)">下一页 ›</button>
+        </div>
+        <table><thead><tr><th></th><th>时间</th><th>账号</th><th>动作</th><th>详情</th><th>状态</th><th></th></tr></thead><tbody id="act_list"></tbody></table>
     </section>
 </div>
 
@@ -346,8 +379,8 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
 <div class="page" id="page-rules">
     <div class="card">
         <b>处置规则</b><br><br>
-        观察套餐ID <input type="number" id="g_plan" style="width:90px">　
-        封禁阈值（异常UA≥） <input type="number" id="g_ban" style="width:80px">　
+        蜜罐套餐ID <input type="number" id="g_plan" style="width:90px">　
+        
         移套餐阈值（异常UA≥） <input type="number" id="g_abn" style="width:80px">　
         移套餐阈值（IP≥） <input type="number" id="g_ips" style="width:70px">　
         执行间隔（秒） <input type="number" id="g_int" style="width:80px"><br><br>
@@ -357,7 +390,34 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
     <div class="card" style="margin-top:14px">
         <b>自定义 UA 黑名单</b> <span class="tag" style="color:var(--sub);font-size:11px">一行一条特征，命中即标记异常（与内置规则合并生效，全站扫描即时应用）</span><br><br>
         <textarea id="custom_ua" rows="6" placeholder="例如：&#10;Chrome/61.0&#10;Go-http-client/2&#10;python-urllib"></textarea>
-        <div style="margin-top:6px"><button class="btn2 pri" onclick="saveRules()">保存 UA 名单</button></div>
+        <div style="margin-top:6px">
+            <button class="btn2 pri" onclick="saveRules()">保存 UA 名单</button>
+            <button class="btn2" onclick="recalcHistory()">按当前名单重算历史命中</button>
+            <span id="recalc_msg" style="font-size:12px;color:var(--sub)"></span>
+        </div>
+    </div>
+</div>
+
+<!-- ========== 系统设置 ========== -->
+<div class="page" id="page-sys">
+    <div class="card">
+        <b>面板名称</b> <span class="tag" style="color:var(--sub);font-size:11px">显示在侧边栏和 TG 通知开头，多站点时用来区分谁是谁</span><br><br>
+        <input type="text" id="sys_name" style="width:220px" placeholder="SubGuard">
+        <button class="btn2 pri" onclick="saveSysName()">保存名称</button>
+        <span id="sys_name_msg" style="font-size:12px;color:var(--sub)"></span>
+    </div>
+    <div class="card" style="margin-top:14px">
+        <b>登录用户名</b> <span class="tag" style="color:var(--sub);font-size:11px">默认为 admin，改掉更安全</span><br><br>
+        <input type="text" id="sys_user" style="width:220px" placeholder="admin">
+        <button class="btn2 pri" onclick="saveSysUser()">保存用户名</button>
+        <span id="sys_user_msg" style="font-size:12px;color:var(--sub)"></span>
+    </div>
+    <div class="card" style="margin-top:14px">
+        <b>修改登录密码</b> <span class="tag" style="color:var(--sub);font-size:11px">直接写入 config.php，改完下次登录生效</span><br><br>
+        <input type="password" id="sys_pwd1" placeholder="新密码（至少8位）" style="width:220px">
+        <input type="password" id="sys_pwd2" placeholder="再输一遍" style="width:220px">
+        <button class="btn2 pri" onclick="changePwd()">修改密码</button>
+        <span id="sys_pwd_msg" style="font-size:12px"></span>
     </div>
 </div>
 
@@ -412,10 +472,18 @@ async function load(manual){
         document.getElementById('c_ab').textContent = d.cards.abnormal;
         document.getElementById('c_abtok').textContent = d.cards.abnormal_tokens;
         document.getElementById('c_4xx').textContent = d.cards.err4xx;
+        document.getElementById('c_acts').textContent = d.cards.acts_24h ?? 0;
+        document.getElementById('c_locks').textContent = d.cards.locks_now ?? 0;
+        const ab = document.getElementById('act_sum_bar');
+        if (d.act_sum && d.act_sum.length) {
+            ab.style.display = 'block';
+            const nm = {ban:'封禁', move:'移蜜罐套餐', plan_lock:'套餐锁拉回', lock:'黑名单锁定'};
+            ab.innerHTML = '24h 处置分布：' + d.act_sum.map(x => `${nm[x.action]||x.action} ${x.count} 次`).join('　·　') + (d.cards.acts_reverted ? `　·　已撤销 ${d.cards.acts_reverted} 次` : '');
+        } else ab.style.display = 'none';
 
         document.getElementById('stream').innerHTML = d.abnormal_stream.length ? d.abnormal_stream.map(e=>`
             <tr><td class="mono">${e.time}</td><td class="mono">${e.ip}</td>
-            <td class="mono">${e.token} <button class="btn" style="color:var(--sub)" onclick="copy('${e.token}')">复制</button></td>
+            <td class="mono">${e.token} <button class="btn" style="color:var(--sub)" onclick="copy('${e.token}')">复制</button>${e.locked ? ' <span class="pill blue">🔒已锁</span>' : ''}${e.exempt ? ' <span class="pill green">⏳豁免中</span>' : ''}</td>
             <td>${esc(e.flag)||'-'}</td><td><span class="pill orange">${esc(e.reason.replace('abnormal_ua:',''))}</span></td>
             <td class="ua">${esc(e.ua)}</td></tr>`).join('')
             : '<tr><td colspan="6" class="empty">24小时内没有异常 UA 命中 🎉</td></tr>';
@@ -524,7 +592,6 @@ function collectGuardCfg(){
         reset_uuid_on_move:document.getElementById('g_ruuid').checked?1:0,
         auto_lock:document.getElementById('g_autolock').checked?1:0,
         plan_quarantine:+document.getElementById('g_plan').value,
-        rule_ban_hits:+document.getElementById('g_ban').value,
         rule_abnormal_hits:+document.getElementById('g_abn').value,
         rule_token_ips:+document.getElementById('g_ips').value,
         interval:+document.getElementById('g_int').value,
@@ -550,7 +617,6 @@ async function loadGuard(){
         document.getElementById('g_ruuid').checked = !!g.reset_uuid_on_move;
         document.getElementById('g_autolock').checked = !!g.auto_lock;
         document.getElementById('g_plan').value = g.plan_quarantine;
-        document.getElementById('g_ban').value = g.rule_ban_hits;
         document.getElementById('g_abn').value = g.rule_abnormal_hits;
         document.getElementById('g_ips').value = g.rule_token_ips;
         document.getElementById('g_int').value = g.interval;
@@ -580,6 +646,36 @@ async function loadGuard(){
         }
     }catch(e){}
 }
+async function recalcHistory(){
+    if(!confirm('将按当前UA名单重新判定全部历史记录（约几万条，需十几秒）。继续？')) return;
+    document.getElementById('recalc_msg').textContent='重算中，请稍候…';
+    const r = await fetch('api.php?action=recalc').then(x=>x.json());
+    document.getElementById('recalc_msg').textContent = r.ok ? ('已重算 ' + r.scanned + ' 条') : '重算失败';
+    load(true);
+}
+async function loadSys(){
+    const r = await fetch('api.php?action=sys_get').then(x=>x.json());
+    if (r.ok) document.getElementById('sys_name').value = r.panel_name;
+}
+async function saveSysName(){
+    const r = await fetch('api.php?action=sys_save_name',{method:'POST',body:JSON.stringify({name:document.getElementById('sys_name').value})}).then(x=>x.json());
+    document.getElementById('sys_name_msg').textContent = r.ok ? '已保存 ✅' : ('失败：'+r.msg);
+    if (r.ok) document.getElementById('logo-name').firstChild.textContent = document.getElementById('sys_name').value;
+}
+async function saveSysUser(){
+    const r = await fetch('api.php?action=sys_save_user',{method:'POST',body:JSON.stringify({user:document.getElementById('sys_user').value})}).then(x=>x.json());
+    document.getElementById('sys_user_msg').textContent = r.ok ? '已保存，下次登录生效' : ('失败：'+r.msg);
+}
+async function changePwd(){
+    const p1 = document.getElementById('sys_pwd1').value, p2 = document.getElementById('sys_pwd2').value;
+    const m = document.getElementById('sys_pwd_msg');
+    if (p1 !== p2) { m.textContent='两次输入不一致'; m.style.color='var(--red)'; return; }
+    const r = await fetch('api.php?action=sys_change_pwd',{method:'POST',body:JSON.stringify({pwd:p1})}).then(x=>x.json());
+    m.textContent = r.ok ? '已修改，下次登录用新密码' : ('失败：'+r.msg);
+    m.style.color = r.ok ? 'var(--green)' : 'var(--red)';
+    if (r.ok) { document.getElementById('sys_pwd1').value=''; document.getElementById('sys_pwd2').value=''; }
+}
+loadSys();
 async function saveDbCfg(){
     const body = Object.assign(collectGuardCfg(), dbBody());
     await fetch('api.php?action=guard_config_save',{method:'POST',body:JSON.stringify(body)});
@@ -608,7 +704,10 @@ async function runGuard(){
     await fetch('api.php?action=guard_config_save',{method:'POST',body:JSON.stringify(Object.assign(collectGuardCfg(), dbBody()))});
     document.getElementById('guard_msg').textContent='执行中…';
     const r = await fetch('api.php?action=guard_run').then(x=>x.json());
-    document.getElementById('guard_msg').textContent = r.msg || `完成：执行${r.done||0} 干跑${r.dry||0} 跳过${r.skip||0} 套餐锁${r.locks||0}`;
+    document.getElementById('guard_msg').textContent = r.msg || `完成：候选${r.candidates??'?'} 执行${r.done||0} 干跑${r.dry||0} 跳过${r.skip||0} 套餐锁${r.locks||0}${r.proactive ? ' 新注册防御' + r.proactive : ''}`;
+    if (r.skip_detail && r.skip_detail.length) {
+        document.getElementById('guard_msg').textContent += ' ｜ 跳过原因：' + r.skip_detail.join('，');
+    }
     actionsLoad();
 }
 async function tgTest(){
@@ -649,18 +748,28 @@ function copyTunnel(){
 const BL_SHOW = 5;
 function blRow(t, r, extra){
     return `<tr${extra?' data-extra="1" style="display:none"':''}><td class="mono">${esc(r.val)}</td><td>${esc(r.note)}</td>
+    <td class="mono" style="color:var(--sub)">${r.ts ? fmtT(r.ts).slice(0,8) : '-'}</td>
     <td><button class="btn" style="color:var(--red)" onclick="blDel('${t}','${r.val}')">删除</button></td></tr>`;
 }
+let BL_CACHE = {};
 async function blLoadAll(){
     for(const t of ['bl_tokens','bl_accounts','bl_ips','wl_tokens','wl_ips']){
-        const list = await fetch('api.php?action=bl_list&type='+t).then(x=>x.json());
+        BL_CACHE[t] = await fetch('api.php?action=bl_list&type='+t).then(x=>x.json());
+    }
+    blRender();
+}
+function blRender(){
+    const q = (document.getElementById('bl_q') ? document.getElementById('bl_q').value : '').trim().toLowerCase();
+    for(const t of ['bl_tokens','bl_accounts','bl_ips','wl_tokens','wl_ips']){
+        let list = BL_CACHE[t] || [];
+        if (q) list = list.filter(r => (r.val + ' ' + r.note).toLowerCase().includes(q));
         let html = list.slice(0, BL_SHOW).map(r=>blRow(t,r,false)).join('');
         if (list.length > BL_SHOW) {
-            html += `<tr><td colspan="3" style="text-align:center;border-bottom:0">
+            html += `<tr><td colspan="4" style="text-align:center;border-bottom:0">
                 <button class="btn" onclick="blToggle('${t}',this)">展开剩余 ${list.length-BL_SHOW} 条 ▾</button></td></tr>`;
             html += list.slice(BL_SHOW).map(r=>blRow(t,r,true)).join('');
         }
-        document.getElementById('list-'+t).innerHTML = html || '<tr><td colspan="3" class="empty">名单为空</td></tr>';
+        document.getElementById('list-'+t).innerHTML = html || '<tr><td colspan="4" class="empty">' + (q ? '无匹配结果' : '名单为空') + '</td></tr>';
     }
 }
 function blToggle(t, btn){
@@ -676,6 +785,18 @@ async function blAdd(type, inputId){
     blLoadAll();
     toast(`导入${r.added||0}条` + (r.skipped ? `，跳过${r.skipped}条无效` : ''));
 }
+async function blExport(type){
+    const list = await fetch('api.php?action=bl_list&type='+type).then(x=>x.json());
+    if(!list.length){ toast('名单为空'); return; }
+    const text = list.map(r => r.val + (r.note ? ' ' + r.note : '')).join('\n') + '\n';
+    const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = type + '-' + new Date().toISOString().slice(0,10) + '.txt';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+    toast('已导出 ' + list.length + ' 条');
+}
 async function blDel(type,val){
     if(!confirm('删除 '+val+' ?')) return;
     await fetch('api.php?action=bl_del&type='+type+'&val='+encodeURIComponent(val));
@@ -684,12 +805,15 @@ async function blDel(type,val){
 
 /* ---- 套餐锁 / 记录 ---- */
 async function locksLoad(){
-    const list = await fetch('api.php?action=locks_list').then(x=>x.json());
+    const q = document.getElementById('lock_q') ? document.getElementById('lock_q').value.trim() : '';
+    const list = await fetch('api.php?action=locks_list' + (q ? '&q='+encodeURIComponent(q) : '')).then(x=>x.json());
+    if (q && !list.length) { document.getElementById('lock_list').innerHTML = '<tr><td colspan="5" class="empty">没有匹配 "'+esc(q)+'" 的锁定</td></tr>'; return; }
     document.getElementById('lock_list').innerHTML = list.map(r=>
         `<tr><td class="mono">${esc(r.email)} (#${r.user_id})</td><td>套餐 ${r.plan_id}</td><td>${esc(r.note)}</td><td class="mono">${fmtT(r.ts)}</td>
         <td><button class="btn" style="color:var(--red)" onclick="lockDel(${r.user_id})">解锁</button></td></tr>`).join('')
         || '<tr><td colspan="5" class="empty">暂无锁定</td></tr>';
 }
+async function locksSearch(){ locksLoad(); }
 async function lockAdd(){
     const body = JSON.stringify({input:document.getElementById('lock_input').value,
         plan_id:+document.getElementById('lock_plan').value, note:document.getElementById('lock_note').value});
@@ -698,21 +822,53 @@ async function lockAdd(){
     locksLoad();
 }
 async function lockDel(uid){
-    if(!confirm('解锁 #'+uid+' ?')) return;
+    if(!confirm('解锁 #'+uid+' ？\n将同时：恢复原套餐 + 加入白名单（不再自动锁定）。')) return;
     await fetch('api.php?action=lock_del&user_id='+uid); locksLoad();
 }
-const ACT_NAME = {ban:'封禁', move:'移观察套餐', plan_lock:'套餐锁拉回', lock:'黑名单锁定'};
+const ACT_NAME = {ban:'封禁', move:'打入蜜罐', plan_lock:'蜜罐拉回', lock:'黑名单收押'};
 const ACT_CLS = {ban:'red', move:'orange', plan_lock:'blue', lock:'red'};
+let actPage = 1, actTotalPages = 1;
+async function actionsSearch(){ actPage = 1; actionsLoad(); }
 async function actionsLoad(){
-    const list = await fetch('api.php?action=actions_list').then(x=>x.json());
+    const q = document.getElementById('act_q') ? document.getElementById('act_q').value.trim() : '';
+    const d = await fetch('api.php?action=actions_list&page=' + actPage + (q ? '&q='+encodeURIComponent(q) : '')).then(x=>x.json());
+    actTotalPages = d.pages || 1;
+    document.getElementById('act_pageinfo').textContent = '共 ' + d.total + ' 条 · 第 ' + d.page + '/' + actTotalPages + ' 页';
+    const list = d.list || [];
     document.getElementById('act_list').innerHTML = list.map(r=>
-        `<tr><td class="mono">${r.time}</td><td>${esc(r.email)}</td><td><span class="pill ${ACT_CLS[r.action]||'blue'}">${ACT_NAME[r.action]||r.action}</span></td>
+        `<tr><td><input type="checkbox" class="act-cb" value="${r.id}"></td>
+        <td class="mono">${r.time}</td><td>${esc(r.email)}</td><td><span class="pill ${ACT_CLS[r.action]||'blue'}">${ACT_NAME[r.action]||r.action}</span></td>
         <td class="ua">${esc(r.detail)}</td><td>${r.status}</td>
-        <td>${r.reverted?'已撤销':`<button class="btn" onclick="revert(${r.id})">撤销</button>`}</td></tr>`).join('')
-        || '<tr><td colspan="6" class="empty">暂无记录</td></tr>';
+        <td>${r.reverted
+            ? `<button class="btn" onclick="revertBack(${r.id},'${r.email}')">重新收押</button>`
+            : `<button class="btn" onclick="revert(${r.id})">撤销</button>`}</td></tr>`).join('')
+        || '<tr><td colspan="7" class="empty">暂无记录</td></tr>';
+    document.getElementById('act_all').checked = false;
+}
+function actPageGo(d){
+    actPage = Math.min(Math.max(1, actPage + d), actTotalPages);
+    actionsLoad();
+}
+function actToggleAll(on){
+    document.querySelectorAll('.act-cb').forEach(cb => cb.checked = on);
+}
+async function revertBack(aid, email){
+    if(!confirm('重新收押 ' + email + ' ？\n将立即锁回蜜罐套餐并写死，本条记录恢复为有效锁定。')) return;
+    const r = await fetch('api.php?action=relock&email=' + encodeURIComponent(email) + '&aid=' + aid).then(x=>x.json());
+    alert(r.ok ? ('已重新收押：' + r.email) : ('失败：' + (r.msg || '未知错误')));
+    actionsLoad();
+}
+async function actBatchDel(){
+    const ids = [...document.querySelectorAll('.act-cb:checked')].map(cb => +cb.value);
+    if (!ids.length) { toast('先勾选记录'); return; }
+    if (!confirm('删除选中的 ' + ids.length + ' 条处置记录？\n（只删日志，不影响任何用户套餐，不可恢复）')) return;
+    const r = await fetch('api.php?action=actions_del',{method:'POST',body:JSON.stringify({ids})}).then(x=>x.json());
+    alert(r.ok ? ('已删除 ' + r.deleted + ' 条') : ('失败：' + (r.msg||'未知')));
+    actPage = 1;
+    actionsLoad();
 }
 async function revert(id){
-    if(!confirm('撤销这条处置？')) return;
+    if(!confirm('撤销将：恢复原套餐 + 加24小时豁免（期内不再被自动处置）\n\n点错没关系——事后可在白名单页删除其豁免条目，再用本页的"重新收押"按钮锁回。确定撤销？')) return;
     const r = await fetch('api.php?action=action_revert&id='+id).then(x=>x.json());
     alert(r.ok ? '已撤销'+(r.dry?'（干跑，仅记录）':'') : ('失败：'+r.msg));
     actionsLoad();

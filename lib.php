@@ -35,6 +35,7 @@ function db() {
     $pdo->exec('CREATE TABLE IF NOT EXISTS bl_accounts (email TEXT PRIMARY KEY, note TEXT, ts INTEGER)');
     $pdo->exec('CREATE TABLE IF NOT EXISTS bl_ips (ip TEXT PRIMARY KEY, note TEXT, ts INTEGER)');
     $pdo->exec('CREATE TABLE IF NOT EXISTS wl_tokens (token TEXT PRIMARY KEY, note TEXT, ts INTEGER)');
+    try { $pdo->exec('ALTER TABLE wl_tokens ADD COLUMN expire INTEGER'); } catch (Throwable $e) {}
     $pdo->exec('CREATE TABLE IF NOT EXISTS wl_ips (ip TEXT PRIMARY KEY, note TEXT, ts INTEGER)');
     $pdo->exec('CREATE TABLE IF NOT EXISTS plan_locks (user_id INTEGER PRIMARY KEY, plan_id INTEGER, note TEXT, ts INTEGER)');
     $pdo->exec('CREATE TABLE IF NOT EXISTS actions (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, user_id INTEGER, email TEXT, token TEXT, action TEXT, detail TEXT, status TEXT, reverted INTEGER DEFAULT 0)');
@@ -180,6 +181,14 @@ function api_stats() {
     $out['cards']['abnormal_tokens'] = (int)$pdo->query("SELECT COUNT(DISTINCT token) FROM events WHERE ts >= $today AND reason != ''")->fetchColumn();
     $out['cards']['err4xx']  = (int)$pdo->query("SELECT COUNT(*) FROM events WHERE ts >= $today AND status >= 400")->fetchColumn();
     $out['cards']['last_scan'] = (int)state_get('last_scan', 0);
+    // 处置统计：24h 动作数 / 当前锁名单人数 / 24h 各动作分布
+    $out['cards']['acts_24h'] = (int)$pdo->query("SELECT COUNT(*) FROM actions WHERE ts >= $today AND status = 'done'")->fetchColumn();
+    $out['cards']['locks_now'] = (int)$pdo->query('SELECT COUNT(*) FROM plan_locks')->fetchColumn();
+    $out['cards']['acts_reverted'] = (int)$pdo->query("SELECT COUNT(*) FROM actions WHERE ts >= $today AND reverted = 1")->fetchColumn();
+    $out['act_sum'] = [];
+    foreach ($pdo->query("SELECT action, COUNT(*) c FROM actions WHERE ts >= $today AND status = 'done' GROUP BY action") as $r) {
+        $out['act_sum'][] = ['action' => $r['action'], 'count' => (int)$r['c']];
+    }
 
     // 异常 UA 排行
     foreach ($pdo->query("SELECT ua, COUNT(*) c FROM events WHERE ts >= $today AND reason != '' GROUP BY ua ORDER BY c DESC LIMIT 20") as $r) {
@@ -222,10 +231,16 @@ function api_stats() {
     }
 
     // 异常 UA 实时流（最近 50 条）
-    foreach ($pdo->query("SELECT ts, ip, token, flag, ua, reason, status FROM events WHERE ts >= $today AND reason != '' ORDER BY id DESC LIMIT 50") as $r) {
+    $lockedT = function_exists('locked_tokens') ? locked_tokens() : [];
+    $exclT = function_exists('active_wl_tokens') ? active_wl_tokens() : [];   // 不隐藏任何记录，仅打标记
+    $stSt = $pdo->prepare("SELECT ts, ip, token, flag, ua, reason, status FROM events WHERE ts >= ? AND reason != '' ORDER BY id DESC LIMIT 50");
+    $stSt->execute([$today]);
+    foreach ($stSt as $r) {
         $out['abnormal_stream'][] = [
             'time' => fmt_time($r['ts']), 'ip' => $r['ip'], 'token' => $r['token'],
             'flag' => $r['flag'], 'ua' => $r['ua'], 'reason' => $r['reason'], 'status' => (int)$r['status'],
+            'locked' => in_array($r['token'], $lockedT),
+            'exempt' => in_array($r['token'], $exclT),
         ];
     }
     return $out;
@@ -271,4 +286,28 @@ function api_geo($ip) {
     $j['time'] = time();
     state_set($key, json_encode($j, JSON_UNESCAPED_UNICODE));
     return $j;
+}
+
+/** 按当前 UA 规则重算全部历史事件的命中标记 */
+function recalc_reasons() {
+    $pdo = db();
+    $st = $pdo->query('SELECT id, ua FROM events');
+    $up = $pdo->prepare('UPDATE events SET reason = ? WHERE id = ?');
+    $changed = 0; $batch = [];
+    while ($r = $st->fetch(PDO::FETCH_ASSOC)) {
+        $new = detect_reason($r['ua']);
+        $batch[] = [$new, $r['id']];
+        if (count($batch) >= 500) {
+            $pdo->beginTransaction();
+            foreach ($batch as $b) { $up->execute($b); $changed++; }
+            $pdo->commit();
+            $batch = [];
+        }
+    }
+    if ($batch) {
+        $pdo->beginTransaction();
+        foreach ($batch as $b) { $up->execute($b); $changed++; }
+        $pdo->commit();
+    }
+    return ['ok' => true, 'scanned' => $changed];
 }

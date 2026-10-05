@@ -8,9 +8,7 @@ return [
     'password' => 'admin123',
 
     // 要监控的 Nginx 日志（宝塔默认在 /www/wwwlogs/，可填多个）
-    'log_files' => [
-        '/www/wwwlogs/139.196.180.104.log',
-    ],
+    'log_files' => [],   // 留空，远程日志源（网页「日志源」页配置）会自动合并进来
 
     // SQLite 数据文件位置（无需改动，确保 data 目录可写）
     'db' => __DIR__ . '/data/subguard.db',

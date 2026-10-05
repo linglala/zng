@@ -29,6 +29,29 @@ switch ($action) {
         echo json_encode(run_scan(false), JSON_UNESCAPED_UNICODE);
         break;
 
+    case 'recalc':
+        echo json_encode(recalc_reasons(), JSON_UNESCAPED_UNICODE);
+        break;
+
+    case 'sys_get':
+        echo json_encode(api_sys_get(), JSON_UNESCAPED_UNICODE);
+        break;
+
+    case 'sys_save_name':
+        $in = json_decode(file_get_contents('php://input'), true) ?: $_POST;
+        echo json_encode(api_sys_save_name($in['name'] ?? ''), JSON_UNESCAPED_UNICODE);
+        break;
+
+    case 'sys_save_user':
+        $in = json_decode(file_get_contents('php://input'), true) ?: $_POST;
+        echo json_encode(api_sys_save_user($in['user'] ?? ''), JSON_UNESCAPED_UNICODE);
+        break;
+
+    case 'sys_change_pwd':
+        $in = json_decode(file_get_contents('php://input'), true) ?: $_POST;
+        echo json_encode(api_sys_change_pwd($in['pwd'] ?? ''), JSON_UNESCAPED_UNICODE);
+        break;
+
     case 'stats':
         $out = api_stats();
         $out['scan'] = $scan;
@@ -106,7 +129,7 @@ switch ($action) {
         break;
 
     case 'locks_list':
-        echo json_encode(api_locks_list(), JSON_UNESCAPED_UNICODE);
+        echo json_encode(api_locks_list($_GET['q'] ?? ''), JSON_UNESCAPED_UNICODE);
         break;
 
     case 'lock_add':
@@ -119,7 +142,16 @@ switch ($action) {
         break;
 
     case 'actions_list':
-        echo json_encode(api_actions_list(), JSON_UNESCAPED_UNICODE);
+        echo json_encode(api_actions_list($_GET['q'] ?? '', $_GET['page'] ?? 1), JSON_UNESCAPED_UNICODE);
+        break;
+
+    case 'relock':
+        echo json_encode(api_relock($_GET['email'] ?? '', (int)($_GET['aid'] ?? 0)), JSON_UNESCAPED_UNICODE);
+        break;
+
+    case 'actions_del':
+        $in = json_decode(file_get_contents('php://input'), true) ?: $_POST;
+        echo json_encode(guard_actions_del($in['ids'] ?? []), JSON_UNESCAPED_UNICODE);
         break;
 
     case 'action_revert':
