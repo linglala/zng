@@ -98,3 +98,20 @@ location /api/v1/client/subscribe {
 - v2.1.3：名单显示加入时间 + 黑名单页搜索框
 - v2.1.2：处置记录分页 + 多选批量删除
 - v2.1.1：修复详情 JSON 尾部字符导致解锁/撤销无法恢复套餐
+
+## v2.1.8 ~ v2.2 更新日志
+
+- **v2.2.0**：节点层测活防御三件套（与订阅层引擎双保险）
+  - `node_sentinel.sh`（装节点，非网站文件）：增量扫节点 access.log，按 UUID 统计"查IP服务种类/其他流量"，连查≥3家、或≥2家且零其他流量 → 5分钟内 POST 警报（真人测速只查1家，不误报）
+  - `node_hook.php`：站点新增**独立接收端**（不走 api.php 登录态），验密钥→UUID对号主→收押+重置UUID/token→TG战报→处置记录留痕；`$DRY_RUN` 观察模式先跑几天再开真锁
+  - `lock_by_uuid.php`：手动接力工具（hook 不可达时按 UUID 一键收押）
+- v2.1.10：处置记录多选批量撤销（全选 + 「撤销所选」，逐条恢复套餐/拆锁/24h豁免）
+- v2.1.9：修复规则设置保存丢失 `auto_defense` 字段
+- v2.1.8：自动防御——单 IP 24h 拉取≥阈值 → IP 黑名单 + 重置其触碰的 token + TG 战报。**国内共享出口/CGNAT 环境慎用**（一个公网 IP 后挂数百用户，按 IP 计数会大面积误伤），建议保持关闭，用 nginx per-token 限流替代
+
+## 节点测活哨兵部署（可选）
+
+1. 节点：`node_sentinel.sh` → `/usr/local/bin/`，填 `BOT_TOKEN`/`CHAT_ID`/`HOOK_KEY`（与 node_hook.php 的 `$NODE_KEY` 一致），`chmod +x`
+2. 节点 crontab：`*/5 * * * * /usr/local/bin/node_sentinel.sh`
+3. 站点：`node_hook.php` 传到 subguard 目录（jk/tk 各一份），改 `$NODE_KEY`
+4. 香港机：留一份 `lock_by_uuid.php` 备用

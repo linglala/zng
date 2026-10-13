@@ -366,6 +366,7 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
             </span></h2>
         <div style="padding:10px 16px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border)">
             <label class="ck"><input type="checkbox" id="act_all" onchange="actToggleAll(this.checked)"> 全选本页</label>
+            <button class="btn2" onclick="actBatchRevert()">撤销所选</button>
             <button class="btn2" style="color:var(--red);border-color:#fecaca" onclick="actBatchDel()">删除所选</button>
             <span id="act_pageinfo" style="margin-left:auto;font-size:12px;color:var(--sub)"></span>
             <button class="btn2" onclick="actPageGo(-1)">‹ 上一页</button>
@@ -383,7 +384,10 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
         
         移套餐阈值（异常UA≥） <input type="number" id="g_abn" style="width:80px">　
         移套餐阈值（IP≥） <input type="number" id="g_ips" style="width:70px">　
-        执行间隔（秒） <input type="number" id="g_int" style="width:80px"><br><br>
+        执行间隔（秒） <input type="number" id="g_int" style="width:80px">　
+        <label class="ck"><input type="checkbox" id="g_defense"> 自动防御</label>
+        单IP≥ <input type="number" id="g_defense_hits" style="width:70px"> 次/24h<br><br>
+        <span style="font-size:12px;color:var(--sub)">自动防御开启后：高频 IP 自动拉黑 + 其触碰的订阅全部重置（UUID+token）+ TG 通知。白名单内的 IP/用户豁免。误伤成本高，建议配合白名单使用。</span><br><br>
         <button class="btn2 pri" onclick="saveRules()">保存规则</button>
         <span id="rules_msg" style="font-size:12px;color:var(--sub)"></span>
     </div>
@@ -598,7 +602,9 @@ function collectGuardCfg(){
         custom_ua:document.getElementById('custom_ua').value,
         tg_enabled:document.getElementById('tg_en').checked?1:0,
         tg_token:document.getElementById('tg_token').value,
-        tg_chatid:document.getElementById('tg_chatid').value};
+        tg_chatid:document.getElementById('tg_chatid').value,
+        auto_defense:document.getElementById('g_defense').checked?1:0,
+        auto_defense_hits:+document.getElementById('g_defense_hits').value};
 }
 function dbBody(){
     return {db_enabled:document.getElementById('db_en').checked?1:0,
@@ -620,6 +626,8 @@ async function loadGuard(){
         document.getElementById('g_abn').value = g.rule_abnormal_hits;
         document.getElementById('g_ips').value = g.rule_token_ips;
         document.getElementById('g_int').value = g.interval;
+        document.getElementById('g_defense').checked = !!g.auto_defense;
+        document.getElementById('g_defense_hits').value = g.auto_defense_hits ?? 100;
         document.getElementById('custom_ua').value = g.custom_ua||'';
         document.getElementById('tg_en').checked = !!g.tg_enabled;
         document.getElementById('tg_token').value = g.tg_token||'';
@@ -704,7 +712,7 @@ async function runGuard(){
     await fetch('api.php?action=guard_config_save',{method:'POST',body:JSON.stringify(Object.assign(collectGuardCfg(), dbBody()))});
     document.getElementById('guard_msg').textContent='执行中…';
     const r = await fetch('api.php?action=guard_run').then(x=>x.json());
-    document.getElementById('guard_msg').textContent = r.msg || `完成：候选${r.candidates??'?'} 执行${r.done||0} 干跑${r.dry||0} 跳过${r.skip||0} 套餐锁${r.locks||0}${r.proactive ? ' 新注册防御' + r.proactive : ''}`;
+    document.getElementById('guard_msg').textContent = r.msg || `完成：候选${r.candidates??'?'} 执行${r.done||0} 干跑${r.dry||0} 跳过${r.skip||0} 套餐锁${r.locks||0}${r.proactive ? ' 新注册防御' + r.proactive : ''}${r.defense && r.defense.ips && r.defense.ips.length ? ' 自动防御' + r.defense.ips.map(d => d.ip + '重置' + d.reset).join(',') : ''}`;
     if (r.skip_detail && r.skip_detail.length) {
         document.getElementById('guard_msg').textContent += ' ｜ 跳过原因：' + r.skip_detail.join('，');
     }
@@ -825,8 +833,8 @@ async function lockDel(uid){
     if(!confirm('解锁 #'+uid+' ？\n将同时：恢复原套餐 + 加入白名单（不再自动锁定）。')) return;
     await fetch('api.php?action=lock_del&user_id='+uid); locksLoad();
 }
-const ACT_NAME = {ban:'封禁', move:'打入蜜罐', plan_lock:'蜜罐拉回', lock:'黑名单收押'};
-const ACT_CLS = {ban:'red', move:'orange', plan_lock:'blue', lock:'red'};
+const ACT_NAME = {ban:'封禁', move:'打入蜜罐', plan_lock:'蜜罐拉回', lock:'黑名单收押', defense:'自动防御'};
+const ACT_CLS = {ban:'red', move:'orange', plan_lock:'blue', lock:'red', defense:'red'};
 let actPage = 1, actTotalPages = 1;
 async function actionsSearch(){ actPage = 1; actionsLoad(); }
 async function actionsLoad(){
@@ -856,6 +864,14 @@ async function revertBack(aid, email){
     if(!confirm('重新收押 ' + email + ' ？\n将立即锁回蜜罐套餐并写死，本条记录恢复为有效锁定。')) return;
     const r = await fetch('api.php?action=relock&email=' + encodeURIComponent(email) + '&aid=' + aid).then(x=>x.json());
     alert(r.ok ? ('已重新收押：' + r.email) : ('失败：' + (r.msg || '未知错误')));
+    actionsLoad();
+}
+async function actBatchRevert(){
+    const ids = [...document.querySelectorAll('.act-cb:checked')].map(cb => +cb.value);
+    if (!ids.length) { toast('先勾选记录'); return; }
+    if (!confirm('撤销选中的 ' + ids.length + ' 条处置？\n每条都会：恢复原套餐 + 拆蜜罐锁 + 24h豁免')) return;
+    const r = await fetch('api.php?action=actions_revert',{method:'POST',body:JSON.stringify({ids})}).then(x=>x.json());
+    alert(r.ok ? ('已撤销 ' + r.reverted + ' 条' + (r.skipped ? '，跳过 ' + r.skipped + ' 条（已撤销或无旧套餐数据）' : '')) : ('失败：' + (r.msg||'')));
     actionsLoad();
 }
 async function actBatchDel(){

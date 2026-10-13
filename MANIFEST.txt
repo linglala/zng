@@ -1,0 +1,25 @@
+SubGuard v2.2.0 仓库更新包 — 文件清单
+========================================
+来源：线上 jk.098757.xyz 站点备份（2026-10-13 宝塔下载，两份互补）
+排除：config.php（含密码，.gitignore 已挡）、data/（46MB SQLite）
+
+文件               仓库旧版                →  本次包内
+────────────────────────────────────────────────────────
+guard.php          28558 bytes            →  31855（+3297）
+                   v2.1.7                →  + auto_defense 自动防御引擎（6处）
+                                          →  + guard_actions_revert 批量撤销支持
+api.php            5155 / v1.5.1          →  5365（+210）
+                                          →  + actions_revert case（批量撤销入口）
+                                          →  版本常量 1.5.1 → 2.2.0（仅显示用途，已核实5处引用全是输出）
+index.php          58136                  →  60368（+2232）
+                                          →  + g_defense 自动防御规则UI（6处）
+                                          →  + 处置记录全选/「撤销所选」（checkbox ×10）
+lib.php            15027                  →  15027（一致，随包附带）
+scan.php           958                    →  626 线上真实版（简化：去掉分块窗口，直接 run_scan）
+TUNNEL.md          在库                   →  线上版（55行，随包同步）
+config.example.php 旧                     →  + username 键（对齐线上 config.php 结构）
+README.md          止于 v2.1.7            →  + v2.1.8~v2.2.0 changelog + 节点哨兵部署章节
+.gitignore         -                      →  未变（data/ config.php *.bak *.lock）
+node_hook.php      新增                   →  节点测活警报接收端 v1.0（独立文件，零改现有代码）
+lock_by_uuid.php   新增                   →  UUID 一键收押工具（警报手动接力）
+node_sentinel.sh   新增                   →  节点测活哨兵 v1.1（装节点，非网站文件）

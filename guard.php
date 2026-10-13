@@ -72,6 +72,7 @@ function guard_config() {
         'custom_ua' => '',
         'tg_enabled' => false, 'tg_token' => '', 'tg_chatid' => '',
         'auto_lock' => false, 'grace_hours' => 24,
+        'auto_defense' => false, 'auto_defense_hits' => 100,
     ];
     $j = state_get('guard_config');
     return $j ? array_merge($d, json_decode($j, true)) : $d;
@@ -162,6 +163,58 @@ function guard_punish($u, $token, $action, $reason) {
         }
         if (!$g['dry_run']) tg_send("⚠️ <b>蜜罐收押</b>\n👤 用户：<code>{$u['email']}</code>\n🎯 原因：{$reason}\n📊 状态：已打入蜜罐套餐#{$g['plan_quarantine']}");
     }
+}
+
+
+/** 自动防御：高频 IP → 拉黑 + 其触碰的 token 全部重置 + TG 汇报 */
+function auto_defense() {
+    $g = guard_config();
+    if (empty($g['auto_defense'])) return ['ran' => false];
+    if (!panel_db()) return ['ran' => false, 'msg' => '面板库未连接'];
+    $pdo = db();
+    $today = time() - 86400;
+    $pre = $g['db_prefix'];
+    $dry = !empty($g['dry_run']);
+
+    // 高频 IP（不用 HAVING 传参，PHP 过滤；排除 IP 白名单）
+    $st = $pdo->prepare("SELECT ip, COUNT(*) c FROM events WHERE ts >= ? AND ip NOT IN (SELECT ip FROM wl_ips) GROUP BY ip");
+    $st->execute([$today]);
+    $result = ['ran' => true, 'dry' => $dry, 'ips' => []];
+    foreach ($st as $r) {
+        if ($r['c'] < $g['auto_defense_hits']) continue;
+        $ip = $r['ip'];
+        // 已在黑名单 = 处理过，跳过（防每轮重复触发）
+        $chk = $pdo->prepare('SELECT 1 FROM bl_ips WHERE ip = ?');
+        $chk->execute([$ip]);
+        if ($chk->fetchColumn()) continue;
+
+        // 收集该 IP 触碰的 token
+        $tk = $pdo->prepare('SELECT DISTINCT token FROM events WHERE ts >= ? AND ip = ?');
+        $tk->execute([$today, $ip]);
+        $reset = 0;
+        foreach ($tk as $row) {
+            $token = $row['token'];
+            $w = $pdo->prepare('SELECT 1 FROM wl_tokens WHERE token = ? AND (expire IS NULL OR expire > ?)');
+            $w->execute([$token, time()]);
+            if ($w->fetchColumn()) continue;
+            $u = guard_token_info($token);
+            if (!$u || $u['banned']) continue;
+            if (!$dry) {
+                $up = panel_db()->prepare("UPDATE {$pre}user SET token = ?, uuid = ? WHERE id = ?");
+                $up->execute([bin2hex(random_bytes(16)), uuid4(), (int)$u['id']]);
+            }
+            guard_log((int)$u['id'], $u['email'], $token, 'defense',
+                json_encode(['ip' => $ip, 'ip_hits' => (int)$r['c'], 'auto_reset' => true], JSON_UNESCAPED_UNICODE),
+                $dry ? 'dry' : 'done');
+            $reset++;
+        }
+        if (!$dry) {
+            $pdo->prepare('INSERT OR REPLACE INTO bl_ips VALUES(?,?,?)')->execute([$ip, '自动防御 ' . date('m-d H:i') . ' 24h拉取' . $r['c'] . '次', time()]);
+            tg_send("🛡 <b>自动防御触发</b>\n🌐 IP：<code>{$ip}</code>\n📊 24h 拉取 {$r['c']} 次（≥{$g['auto_defense_hits']}）\n⚔️ 已拉黑，其触碰的 {$reset} 个订阅已重置");
+        }
+        $result['ips'][] = ['ip' => $ip, 'hits' => (int)$r['c'], 'reset' => $reset];
+    }
+    return $result;
 }
 
 /** 引擎主流程 */
@@ -278,7 +331,8 @@ function guard_run($force = false) {
         $locked++;
     }
 
-    return ['ok' => true, 'done' => $done, 'dry' => $dry, 'skip' => $skip, 'locks' => $locked, 'dry_run' => $g['dry_run'], 'candidates' => count($candidates), 'skip_detail' => array_slice($skip_detail, 0, 30), 'proactive' => $proactive];
+    $defense = auto_defense();
+    return ['ok' => true, 'done' => $done, 'dry' => $dry, 'skip' => $skip, 'locks' => $locked, 'dry_run' => $g['dry_run'], 'candidates' => count($candidates), 'skip_detail' => array_slice($skip_detail, 0, 30), 'proactive' => $proactive, 'defense' => $defense];
 }
 
 /** 撤销处置 */
@@ -595,4 +649,16 @@ function api_relock($email, $action_id) {
     db()->prepare('UPDATE actions SET reverted = 0, ts = ?, status = ?, detail = ?, action = ? WHERE id = ?')
         ->execute([time(), guard_config()['dry_run'] ? 'dry' : 'done', $new_detail, 'lock', (int)$action_id]);
     return ['ok' => true, 'email' => $u['email']];
+}
+
+/** 批量撤销处置记录（恢复原套餐+拆锁+豁免） */
+function guard_actions_revert($ids) {
+    $ids = array_filter(array_map('intval', (array)$ids));
+    if (!$ids) return ['ok' => false, 'msg' => '未选择记录'];
+    $ok = 0; $fail = 0;
+    foreach ($ids as $id) {
+        $r = guard_revert($id);
+        if (!empty($r['ok'])) $ok++; else $fail++;
+    }
+    return ['ok' => true, 'reverted' => $ok, 'skipped' => $fail];
 }

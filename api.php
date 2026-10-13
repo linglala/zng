@@ -7,7 +7,7 @@ require __DIR__ . '/guard.php';
 session_start();
 header('Content-Type: application/json; charset=utf-8');
 
-const SG_VERSION = '1.5.1';
+const SG_VERSION = '2.2.0';
 
 if (empty($_SESSION['subguard_ok'])) {
     http_response_code(403);
@@ -147,6 +147,11 @@ switch ($action) {
 
     case 'relock':
         echo json_encode(api_relock($_GET['email'] ?? '', (int)($_GET['aid'] ?? 0)), JSON_UNESCAPED_UNICODE);
+        break;
+
+    case 'actions_revert':
+        $in = json_decode(file_get_contents('php://input'), true) ?: $_POST;
+        echo json_encode(guard_actions_revert($in['ids'] ?? []), JSON_UNESCAPED_UNICODE);
         break;
 
     case 'actions_del':
