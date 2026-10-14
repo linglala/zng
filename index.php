@@ -388,6 +388,8 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
         <label class="ck"><input type="checkbox" id="g_defense"> 自动防御</label>
         单IP≥ <input type="number" id="g_defense_hits" style="width:70px"> 次/24h<br><br>
         <span style="font-size:12px;color:var(--sub)">自动防御开启后：高频 IP 自动拉黑 + 其触碰的订阅全部重置（UUID+token）+ TG 通知。白名单内的 IP/用户豁免。误伤成本高，建议配合白名单使用。</span><br><br>
+        <b>节点哨兵</b>　密钥 <input id="g_nodekey" style="width:230px">　<button class="btn2" type="button" onclick="document.getElementById('g_nodekey').value=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('')">随机生成</button><br>
+        <span style="font-size:12px;color:var(--sub)">哨兵装在节点上，测活警报 POST 回 node_hook.php 时验此密钥。jk/tk 两站请设同一把；装节点时安装脚本会要求输入同一把。留空 = 关闭节点警报接口。</span><br><br>
         <button class="btn2 pri" onclick="saveRules()">保存规则</button>
         <span id="rules_msg" style="font-size:12px;color:var(--sub)"></span>
     </div>
@@ -604,7 +606,8 @@ function collectGuardCfg(){
         tg_token:document.getElementById('tg_token').value,
         tg_chatid:document.getElementById('tg_chatid').value,
         auto_defense:document.getElementById('g_defense').checked?1:0,
-        auto_defense_hits:+document.getElementById('g_defense_hits').value};
+        auto_defense_hits:+document.getElementById('g_defense_hits').value,
+        node_key:document.getElementById('g_nodekey').value.trim()};
 }
 function dbBody(){
     return {db_enabled:document.getElementById('db_en').checked?1:0,
@@ -628,6 +631,7 @@ async function loadGuard(){
         document.getElementById('g_int').value = g.interval;
         document.getElementById('g_defense').checked = !!g.auto_defense;
         document.getElementById('g_defense_hits').value = g.auto_defense_hits ?? 100;
+        document.getElementById('g_nodekey').value = g.node_key||'';
         document.getElementById('custom_ua').value = g.custom_ua||'';
         document.getElementById('tg_en').checked = !!g.tg_enabled;
         document.getElementById('tg_token').value = g.tg_token||'';

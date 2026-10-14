@@ -73,6 +73,7 @@ function guard_config() {
         'tg_enabled' => false, 'tg_token' => '', 'tg_chatid' => '',
         'auto_lock' => false, 'grace_hours' => 24,
         'auto_defense' => false, 'auto_defense_hits' => 100,
+        'node_key' => '',
     ];
     $j = state_get('guard_config');
     return $j ? array_merge($d, json_decode($j, true)) : $d;

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# ============================================================
+# SubGuard 节点哨兵 · 一键安装 v1.0
+# 用法（在节点机上）:
+#   curl -sSL https://raw.githubusercontent.com/linglala/zng/master/install_node_sentinel.sh | bash
+# 或下载后: bash install_node_sentinel.sh
+# 前置: 面板端须先在「规则设置」设好节点哨兵密钥（jk/tk 两站同一把）
+# ============================================================
+set -e
+
+echo "=========================================="
+echo " SubGuard 节点哨兵 一键安装"
+echo "=========================================="
+
+# ---- 依赖检查 ----
+for cmd in perl curl crontab; do
+  command -v $cmd >/dev/null 2>&1 || { echo "✗ 缺少 $cmd，请先安装（apt/yum install $cmd）"; exit 1; }
+done
+
+# ---- ① Hook 地址 ----
+read -p "① Hook 地址（回车=双站默认）: " HOOK_IN
+HOOK_URLS=${HOOK_IN:-"https://jk.098757.xyz/node_hook.php https://tk.098757.xyz/node_hook.php"}
+
+# ---- ② 密钥（不回显）----
+read -s -p "② NODE_KEY（面板规则设置里那把，输入不回显）: " HOOK_KEY; echo
+if [ -z "$HOOK_KEY" ]; then echo "✗ 密钥不能为空"; exit 1; fi
+
+# ---- ③④ TG 回退通道（可跳过）----
+read -p "③ TG Bot Token（hook 全挂时的回退告警，回车跳过）: " BOT_TOKEN
+read -p "④ TG Chat ID（回车跳过）: " CHAT_ID
+
+# ---- 日志路径 ----
+LOG=""
+for p in /etc/V2bX/access.log /etc/XrayR/access.log /etc/v2bx/access.log; do
+  [ -f "$p" ] && LOG="$p" && break
+done
+if [ -z "$LOG" ]; then
+  read -p "未找到默认日志，请输入节点 access.log 完整路径: " LOG
+  [ -f "$LOG" ] || { echo "✗ 日志不存在: $LOG"; exit 1; }
+fi
+echo "✓ 监控日志: $LOG"
+
+# ---- 安装哨兵 ----
+DST=/usr/local/bin/node_sentinel.sh
+echo "下载哨兵..."
+if ! curl -sfSL -m 30 -o "$DST" "https://raw.githubusercontent.com/linglala/zng/master/node_sentinel.sh"; then
+  echo "✗ GitHub 下载失败"
+  read -p "请输入本地 node_sentinel.sh 路径（手动上传后的）: " LOCAL
+  [ -f "$LOCAL" ] || { echo "✗ 文件不存在"; exit 1; }
+  cp "$LOCAL" "$DST"
+fi
+chmod +x "$DST"
+
+# ---- 写入配置 ----
+sed -i "s|^BOT_TOKEN=.*|BOT_TOKEN=\"$BOT_TOKEN\"|" "$DST"
+sed -i "s|^CHAT_ID=.*|CHAT_ID=\"$CHAT_ID\"|" "$DST"
+sed -i "s|^HOOK_KEY=.*|HOOK_KEY=\"$HOOK_KEY\"|" "$DST"
+sed -i "s|^HOOK_URLS=.*|HOOK_URLS=\"$HOOK_URLS\"|" "$DST"
+echo "✓ 配置已写入"
+
+# ---- 挂 cron ----
+( crontab -l 2>/dev/null | grep -v 'node_sentinel.sh'; echo "*/5 * * * * $DST" ) | crontab -
+echo "✓ cron: */5 * * * * $DST"
+
+# ---- 自检（首跑自动跳过历史日志）----
+echo "=== 自检 ==="
+"$DST" && echo "✓ 哨兵就位"
+echo ""
+echo "警报留痕: /var/log/node_sentinel_alerts.log"
+echo "观察模式 TG 战报会带「观察模式」字样；面板处置记录同步留痕。"
+echo "=========================================="

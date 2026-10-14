@@ -1,19 +1,20 @@
 <?php
 /**
- * SubGuard 节点测活警报接收端 v1.0
+ * SubGuard 节点测活警报接收端 v1.2
  * 独立文件：不修改、不依赖 api.php 的任何现有代码。
  * 节点哨兵 POST 过来 → UUID 对号主 → 收押（蜜罐套餐+重置UUID/token）
  *   → TG 战报 → 处置记录留痕（action=lock，解锁/撤销全兼容）
  *
- * 部署：传到 /www/wwwroot/jk.098757.xyz/ 和 /www/wwwroot/tk.098757.xyz/ 各一份
- * 配置：改下面 $NODE_KEY（两站同一把），观察期保持 $DRY_RUN=true
+ * 密钥管理：规则设置页「节点哨兵密钥」输入框（存入 guard_config.node_key）
+ * $DRY_RUN：观察期保持 true，确认无误伤后手动改 false
  */
 require __DIR__ . '/lib.php';
 require __DIR__ . '/guard.php';
 header('Content-Type: application/json; charset=utf-8');
 
-$NODE_KEY = '在这里改成一串复杂密钥';
-$DRY_RUN  = true;   // true=只报不锁（观察模式），确认无误伤后改 false
+$g        = guard_config();
+$NODE_KEY = trim((string)($g['node_key'] ?? ''));   // 面板配置；空=接口关闭
+$DRY_RUN  = true;                                   // 观察模式开关
 
 // ---- 取参 ----
 $p    = $_POST ?: $_GET;
@@ -26,7 +27,7 @@ $from = substr(trim((string)($p['ip'] ?? '')), 0, 45);
 $ts   = (int)($p['ts'] ?? 0);
 
 // ---- 校验 ----
-if ($NODE_KEY === '在这里改成一串复杂密钥' || !hash_equals($NODE_KEY, $key)) {
+if (!$NODE_KEY || !hash_equals($NODE_KEY, $key)) {
     http_response_code(403);
     echo json_encode(['ok' => false, 'error' => 'bad key']);
     exit;
@@ -42,7 +43,6 @@ if (!preg_match('/^[0-9a-f-]{36}$/', $uuid)) {
     exit;
 }
 
-$g   = guard_config();
 $out = ['ok' => true, 'site' => state_get('panel_name', 'SubGuard')];
 if (!(int)$g['plan_quarantine']) {
     echo json_encode(['ok' => false, 'error' => 'plan_quarantine 未配置']); exit;
