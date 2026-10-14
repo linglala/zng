@@ -1,7 +1,4 @@
-zng 仓库补丁 v2.2.1（sentinel v1.2 修正版）
-guard.php / index.php 手术版（node_key 面板密钥链路）
-node_hook.php v1.2（读面板密钥）/ lock_by_uuid.php v1.1（自动双库）
-engine.php（新增）
-install_node_sentinel.sh v1.1（防 curl|bash，必须先下载再运行）
-node_sentinel.sh v1.2（解析器双格式兼容：裸UUID/标签|UUID、from tcp:IP:）
-README.md 见仓库现有版（内容不变，部署流程以下方为准）
+zng 仓库补丁 v2.2.1（V2bX 自动开日志版）
+install_node_sentinel.sh v1.3：自动探测 /etc/V2bX|/etc/v2bx → 开 info → 注入 AccessPath → JSON校验 → 重启 → 幂等
+node_sentinel.sh v1.3：双格式解析 + 300MB 自清
+guard.php / index.php 手术版 / node_hook.php v1.2 / lock_by_uuid.php v1.1 / engine.php

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# SubGuard 节点哨兵 · 一键安装 v1.1
+# SubGuard 节点哨兵 · 一键安装 v1.3
 # 用法（在节点机上，必须先下载再运行，不要 curl|bash 管道执行）:
 #   curl -sSL -o /tmp/install.sh https://raw.githubusercontent.com/linglala/zng/master/install_node_sentinel.sh
 #   bash /tmp/install.sh
@@ -17,7 +17,7 @@ if [ ! -t 0 ]; then
 fi
 
 echo "=========================================="
-echo " SubGuard 节点哨兵 一键安装 v1.1"
+echo " SubGuard 节点哨兵 一键安装 v1.3"
 echo "=========================================="
 
 # ---- 依赖检查 ----
@@ -36,6 +36,31 @@ if [ -z "$HOOK_KEY" ]; then echo "✗ 密钥不能为空"; exit 1; fi
 # ---- ③④ TG 回退通道（可跳过）----
 read -p "③ TG Bot Token（hook 全挂时的回退告警，回车跳过）: " BOT_TOKEN
 read -p "④ TG Chat ID（回车跳过）: " CHAT_ID
+
+# ---- V2bX：自动开启 access 日志（幂等）----
+V2BX_DIR=""
+for d in /etc/V2bX /etc/v2bx; do
+  [ -f "$d/config.json" ] && V2BX_DIR="$d" && break
+done
+if [ -n "$V2BX_DIR" ]; then
+  changed=0
+  if grep -q '"Level": "error"' "$V2BX_DIR/config.json"; then
+    sed -i 's/"Level": "error"/"Level": "info"/g' "$V2BX_DIR/config.json"
+    changed=1
+  fi
+  if ! grep -q '"AccessPath"' "$V2BX_DIR/config.json"; then
+    sed -i 's|"ErrorPath": "\([^"]*\)error.log"|"ErrorPath": "\1error.log",\n                "AccessPath": "\1access.log"|' "$V2BX_DIR/config.json"
+    changed=1
+  fi
+  if [ "$changed" = "1" ]; then
+    if command -v python3 >/dev/null 2>&1; then
+      python3 -c "import json; json.load(open('$V2BX_DIR/config.json'))" 2>/dev/null || { echo "✗ config.json 修改后校验失败，请手工检查 $V2BX_DIR/config.json"; exit 1; }
+    fi
+    systemctl restart V2bX 2>/dev/null || systemctl restart v2bx 2>/dev/null || true
+    sleep 5
+    echo "✓ V2bX access 日志已开启并重启"
+  fi
+fi
 
 # ---- 日志路径 ----
 LOG=""
@@ -67,6 +92,24 @@ sed -i "s|^CHAT_ID=.*|CHAT_ID=\"$CHAT_ID\"|" "$DST"
 sed -i "s|^HOOK_KEY=.*|HOOK_KEY=\"$HOOK_KEY\"|" "$DST"
 sed -i "s|^HOOK_URLS=.*|HOOK_URLS=\"$HOOK_URLS\"|" "$DST"
 echo "✓ 配置已写入"
+
+# ---- 日志切割（防硬盘满）----
+if command -v logrotate >/dev/null 2>&1; then
+  cat > /etc/logrotate.d/v2bx-node <<EOF
+$(dirname "$LOG")/*.log {
+    daily
+    rotate 3
+    maxsize 100M
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+EOF
+  echo "✓ 日志切割已配置: /etc/logrotate.d/v2bx-node"
+else
+  echo "（无 logrotate，哨兵内置 300MB 自清兜底）"
+fi
 
 # ---- 挂 cron ----
 ( crontab -l 2>/dev/null | grep -v 'node_sentinel.sh'; echo "*/5 * * * * $DST" ) | crontab -

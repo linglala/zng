@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# SubGuard 节点测活哨兵 v1.2
+# SubGuard 节点测活哨兵 v1.3
 # 检测：节点日志按 UUID 统计"查IP域名种类/其他流量"
 #   判定：hc>=3（连查三家）或 hc>=2 且 other=0（只查IP没人味）→ 警报
 # 通报（双通道，自动降级）：
@@ -39,6 +39,15 @@ if [ "$START" -eq 0 ] && [ "$SIZE" -gt 1000000 ]; then
   echo "$SIZE" > "$OFFSET_FILE"
   exit 0
 fi
+# 日志自卫：超 300MB 清空（节点日志只喂哨兵，截断无损）
+MAX_LOG=$((300*1024*1024))
+if [ "$SIZE" -gt "$MAX_LOG" ]; then
+  : > "$LOG"
+  echo 0 > "$OFFSET_FILE"
+  echo "$(date '+%F %T') 节点日志超300MB，已自清" >> "$ALERT_LOG"
+  exit 0
+fi
+
 CHUNK=$(tail -c +$((START+1)) "$LOG" 2>/dev/null)
 echo "$SIZE" > "$OFFSET_FILE"
 [ -z "$CHUNK" ] && exit 0
