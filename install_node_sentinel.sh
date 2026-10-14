@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 # ============================================================
-# SubGuard 节点哨兵 · 一键安装 v1.0
-# 用法（在节点机上）:
-#   curl -sSL https://raw.githubusercontent.com/linglala/zng/master/install_node_sentinel.sh | bash
-# 或下载后: bash install_node_sentinel.sh
+# SubGuard 节点哨兵 · 一键安装 v1.1
+# 用法（在节点机上，必须先下载再运行，不要 curl|bash 管道执行）:
+#   curl -sSL -o /tmp/install.sh https://raw.githubusercontent.com/linglala/zng/master/install_node_sentinel.sh
+#   bash /tmp/install.sh
 # 前置: 面板端须先在「规则设置」设好节点哨兵密钥（jk/tk 两站同一把）
 # ============================================================
 set -e
 
+# 防管道执行：交互 read 会从管道吞掉脚本自身
+if [ ! -t 0 ]; then
+  echo "✗ 检测到管道执行（curl | bash）。交互安装必须先下载再运行："
+  echo "  curl -sSL -o /tmp/install.sh https://raw.githubusercontent.com/linglala/zng/master/install_node_sentinel.sh"
+  echo "  bash /tmp/install.sh"
+  exit 1
+fi
+
 echo "=========================================="
-echo " SubGuard 节点哨兵 一键安装"
+echo " SubGuard 节点哨兵 一键安装 v1.1"
 echo "=========================================="
 
 # ---- 依赖检查 ----
@@ -35,7 +43,9 @@ for p in /etc/V2bX/access.log /etc/XrayR/access.log /etc/v2bx/access.log; do
   [ -f "$p" ] && LOG="$p" && break
 done
 if [ -z "$LOG" ]; then
-  read -p "未找到默认日志，请输入节点 access.log 完整路径: " LOG
+  echo "未在默认位置找到节点日志。常见查找命令："
+  echo "  find /etc /www /usr/local /opt -maxdepth 4 -name 'access*.log' 2>/dev/null"
+  read -p "请输入节点 access.log 完整路径: " LOG
   [ -f "$LOG" ] || { echo "✗ 日志不存在: $LOG"; exit 1; }
 fi
 echo "✓ 监控日志: $LOG"

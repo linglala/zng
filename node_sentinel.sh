@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# SubGuard 节点测活哨兵 v1.1
+# SubGuard 节点测活哨兵 v1.2
 # 检测：节点日志按 UUID 统计"查IP域名种类/其他流量"
 #   判定：hc>=3（连查三家）或 hc>=2 且 other=0（只查IP没人味）→ 警报
 # 通报（双通道，自动降级）：
@@ -49,10 +49,10 @@ RESULTS=$(printf '%s\n' "$CHUNK" | perl -e '
 my %hc = my %other = my %ip = ();
 my $pat = qr/(?:^|\.)((?:api\.)?ipify\.org|ipwho\.is|(?:www\.|myip\.)?ipip\.net|ip-api\.com|ipinfo\.io|ifconfig\.(?:me|io)|icanhazip\.com|cip\.cc|ip\.sb|myip\.com|checkip\.dyndns\.org|test-ipv6\.com)/;
 while (<STDIN>) {
-  next unless /email: ([0-9a-fA-F-]{36})/; my $u = lc($1);
-  my $from = /from ([0-9.]+):/ ? $1 : "?";
+  next unless /email: .*?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/; my $u = lc($1);
+  my $from = /from (?:tcp:|udp:)?([0-9.]+):/ ? $1 : "?";
   $ip{$u}{$from}++;
-  if (/\b(?:tcp|udp):([a-z0-9][a-z0-9.-]*?):/i) {
+  if (/accepted (?:tcp|udp):([a-z0-9][a-z0-9.-]*?):/i) {
     my $d = lc($1);
     if ($d =~ $pat) { $hc{$u}{$1}++ } else { $other{$u}++ }
   }

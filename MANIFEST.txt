@@ -1,18 +1,7 @@
-zng 仓库补丁 v2.2.1 — 文件清单
-================================
-基准：仓库当前状态（v2.2.0 已推送，2026-10-14 上午核验）
-本补丁 = 5 替换 + 2 新增 + 2 文档
-
-替换（比仓库现行新）：
-  guard.php         31855 → 手术版（注册 node_key 默认键，修复"新配置键存不进"老病根）
-  index.php         60368 → 手术版（规则设置页新增「节点哨兵 密钥」输入框+随机生成）
-  node_hook.php     4380  → v1.2（密钥改从 guard_config.node_key 读，留空=接口关闭）
-  lock_by_uuid.php  1287  → v1.1（自动 jk/tk 双库识别，不用再带站参数）
-  README.md         → v2.2.1 章节 + 新部署流程
-
-新增（仓库里没有）：
-  engine.php              引擎独立触发器（cron 5分钟，CLI-only，flock 防重入）
-  install_node_sentinel.sh 节点一键安装脚本（交互输入密钥，从本仓库拉哨兵）
-
-无需动：api.php / lib.php / scan.php / node_sentinel.sh / TUNNEL.md /
-        config.example.php / LICENSE / .gitignore（均已最新）
+zng 仓库补丁 v2.2.1（sentinel v1.2 修正版）
+guard.php / index.php 手术版（node_key 面板密钥链路）
+node_hook.php v1.2（读面板密钥）/ lock_by_uuid.php v1.1（自动双库）
+engine.php（新增）
+install_node_sentinel.sh v1.1（防 curl|bash，必须先下载再运行）
+node_sentinel.sh v1.2（解析器双格式兼容：裸UUID/标签|UUID、from tcp:IP:）
+README.md 见仓库现有版（内容不变，部署流程以下方为准）
