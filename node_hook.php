@@ -1,12 +1,10 @@
 <?php
 /**
- * SubGuard 节点测活警报接收端 v1.2
+ * SubGuard 节点测活警报接收端 v1.3
  * 独立文件：不修改、不依赖 api.php 的任何现有代码。
- * 节点哨兵 POST 过来 → UUID 对号主 → 收押（蜜罐套餐+重置UUID/token）
- *   → TG 战报 → 处置记录留痕（action=lock，解锁/撤销全兼容）
- *
- * 密钥管理：规则设置页「节点哨兵密钥」输入框（存入 guard_config.node_key）
- * $DRY_RUN：观察期保持 true，确认无误伤后手动改 false
+ * 密钥：规则设置页「节点哨兵密钥」（guard_config.node_key），空 = 接口关闭
+ * 留痕：每次警报写 action='node_alert'（总览「节点测活」卡片数据源）
+ *       真收押另写 'lock' 记录（撤销/解锁兼容）
  */
 require __DIR__ . '/lib.php';
 require __DIR__ . '/guard.php';
@@ -14,7 +12,7 @@ header('Content-Type: application/json; charset=utf-8');
 
 $g        = guard_config();
 $NODE_KEY = trim((string)($g['node_key'] ?? ''));   // 面板配置；空=接口关闭
-$DRY_RUN  = true;                                   // 观察模式开关
+$DRY_RUN  = false;                                  // 线上现状：自动收押（观察期确认无误伤）
 
 // ---- 取参 ----
 $p    = $_POST ?: $_GET;
@@ -60,17 +58,33 @@ $u = $st->fetch(PDO::FETCH_ASSOC);
 if (!$u) { $out['found'] = false; echo json_encode($out); exit; }
 $out['found'] = true; $out['email'] = $u['email'];
 
-// ---- 已处置过的跳过（幂等，重放安全）----
-if ($u['banned'])                          { $out['skipped'] = 'banned';           echo json_encode($out); exit; }
-if ((int)$u['plan_id'] === (int)$g['plan_quarantine']) { $out['skipped'] = 'quarantined'; echo json_encode($out); exit; }
+// ---- 统一留痕：任何结局都写 node_alert（总览卡片数据源）----
+$alert = function($outcome) use ($u, $node, $uuid, $hc, $other, $from) {
+    guard_log($u['id'], $u['email'], '', 'node_alert', json_encode([
+        'node' => $node, 'uuid' => $uuid, 'hc' => $hc, 'other' => $other,
+        'ip' => $from, 'outcome' => $outcome,
+    ], JSON_UNESCAPED_UNICODE), 'done');
+};
+
+// ---- 已处置过的跳过（留痕后静默，幂等）----
+if ($u['banned']) {
+    $alert('banned');
+    $out['skipped'] = 'banned';
+    echo json_encode($out); exit;
+}
+if ((int)$u['plan_id'] === (int)$g['plan_quarantine']) {
+    $alert('quarantined');
+    $out['skipped'] = 'quarantined';
+    echo json_encode($out); exit;
+}
 
 $reason = "节点测活警报[{$node}] 查IP域名{$hc}种/其他流量{$other} 来源IP:{$from}";
 $detail = json_encode(['reason' => $reason, 'old_plan' => (int)$u['plan_id'],
     'old_expire' => (int)($u['expired_at'] ?? 0)], JSON_UNESCAPED_UNICODE);
 
-// ---- 观察模式：只记日志 + TG，不动人 ----
+// ---- 观察模式 ----
 if ($DRY_RUN) {
-    guard_log($u['id'], $u['email'], '', 'lock', $detail . ' ;（节点哨兵·观察模式未执行）', 'dry');
+    $alert('dry');
     tg_send("🚨 <b>节点测活警报 · 观察模式</b>\n🖥 节点：{$node}\n👤 用户：<code>{$u['email']}</code>\n📊 查IP域名 {$hc} 种 / 其他流量 {$other}\n🌐 来源IP：<code>{$from}</code>\n⏳ 未锁定（node_hook.php 改 \$DRY_RUN=false 后自动收押）");
     $out['locked'] = false; $out['dry'] = true;
     echo json_encode($out, JSON_UNESCAPED_UNICODE); exit;
@@ -83,6 +97,7 @@ panel_db()->prepare("UPDATE {$pre}user SET plan_id = ?, group_id = ?, uuid = ?, 
 db()->prepare('INSERT OR REPLACE INTO plan_locks VALUES(?,?,?,?)')
     ->execute([(int)$u['id'], (int)$g['plan_quarantine'], $reason, time()]);
 guard_log($u['id'], $u['email'], '', 'lock', $detail . " ;新套餐={$g['plan_quarantine']}（节点哨兵收押）", 'done');
+$alert('locked');
 tg_send("🚫 <b>节点测活 · 蜜罐收押</b>\n🖥 节点：{$node}\n👤 用户：<code>{$u['email']}</code>\n🎯 查IP域名 {$hc} 种 / 其他流量 {$other}\n🌐 来源IP：<code>{$from}</code>\n📊 已锁定套餐#{$g['plan_quarantine']}，UUID/token 已重置");
 $out['locked'] = true;
 echo json_encode($out, JSON_UNESCAPED_UNICODE);

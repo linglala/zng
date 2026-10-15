@@ -187,6 +187,11 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
     <div id="act_sum_bar" style="display:none;background:#fff;border:1px solid var(--border);border-radius:12px;padding:10px 16px;margin:-6px 0 16px;font-size:13px;color:var(--sub)"></div>
 
     <section class="sec">
+        <h2>节点测活记录 <span class="tag">节点哨兵上报 · 含蜜罐/封禁内续测</span></h2>
+        <table><thead><tr><th>时间</th><th>节点</th><th>号主</th><th>查IP域名</th><th>其他流量</th><th>来源IP</th><th>结果</th></tr></thead><tbody id="nodealerts"></tbody></table>
+    </section>
+
+    <section class="sec">
         <h2>异常 UA 实时流 <span class="tag">命中爬虫/服务器/转换站 UA 的订阅拉取</span></h2>
         <table><thead><tr><th>时间</th><th>IP</th><th>Token</th><th>flag</th><th>命中规则</th><th>UA</th></tr></thead><tbody id="stream"></tbody></table>
     </section>
@@ -388,8 +393,6 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
         <label class="ck"><input type="checkbox" id="g_defense"> 自动防御</label>
         单IP≥ <input type="number" id="g_defense_hits" style="width:70px"> 次/24h<br><br>
         <span style="font-size:12px;color:var(--sub)">自动防御开启后：高频 IP 自动拉黑 + 其触碰的订阅全部重置（UUID+token）+ TG 通知。白名单内的 IP/用户豁免。误伤成本高，建议配合白名单使用。</span><br><br>
-        <b>节点哨兵</b>　密钥 <input id="g_nodekey" style="width:230px">　<button class="btn2" type="button" onclick="document.getElementById('g_nodekey').value=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('')">随机生成</button><br>
-        <span style="font-size:12px;color:var(--sub)">哨兵装在节点上，测活警报 POST 回 node_hook.php 时验此密钥。jk/tk 两站请设同一把；装节点时安装脚本会要求输入同一把。留空 = 关闭节点警报接口。</span><br><br>
         <button class="btn2 pri" onclick="saveRules()">保存规则</button>
         <span id="rules_msg" style="font-size:12px;color:var(--sub)"></span>
     </div>
@@ -500,6 +503,7 @@ async function load(manual){
         document.getElementById('uarank').innerHTML = d.ua_rank.length
             ? d.ua_rank.map(u=>`<tr><td class="ua">${esc(u.ua)}</td><td>${u.count}</td></tr>`).join('')
             : '<tr><td colspan="2" class="empty">24小时内没有异常 UA</td></tr>';
+    loadNodeAlerts();
     }catch(e){
         document.getElementById('scan-dot').className='dot r';
         document.getElementById('scaninfo').textContent = '连接失败';
@@ -508,6 +512,19 @@ async function load(manual){
         warnEl.innerHTML = '⚠️ API 请求失败：<span class="mono">'+esc(e.message||String(e))+'</span>';
     }
     if(manual) toast('已刷新');
+}
+
+/* ---- 节点测活卡片 ---- */
+async function loadNodeAlerts(){
+    try{
+        const d = await fetch('api.php?action=node_alerts').then(x=>x.json());
+        const oc = {locked:'🔒 已收押', dry:'👀 观察模式', quarantined:'📦 蜜罐内续测', banned:'🚫 封禁内续测'};
+        const cl = {locked:'blue', dry:'green', quarantined:'orange', banned:'orange'};
+        document.getElementById('nodealerts').innerHTML = (d.rows && d.rows.length) ? d.rows.map(r=>{
+            let o = {}; try{ o = JSON.parse(r.detail || '{}'); }catch(e){}
+            return `<tr><td class="mono">${r.time}</td><td>${esc(o.node||'-')}</td><td>${esc(r.email||'-')}</td><td>${o.hc??'-'} 种</td><td>${o.other??'-'}</td><td class="mono">${esc(o.ip||'-')}</td><td><span class="pill ${cl[o.outcome]||''}">${oc[o.outcome]||esc(o.outcome||'-')}</span></td></tr>`;
+        }).join('') : '<tr><td colspan="7" class="empty">暂无节点测活警报 🎉</td></tr>';
+    }catch(e){ document.getElementById('nodealerts').innerHTML = '<tr><td colspan="7" class="empty">加载失败</td></tr>'; }
 }
 
 /* ---- 排序 ---- */
@@ -606,8 +623,7 @@ function collectGuardCfg(){
         tg_token:document.getElementById('tg_token').value,
         tg_chatid:document.getElementById('tg_chatid').value,
         auto_defense:document.getElementById('g_defense').checked?1:0,
-        auto_defense_hits:+document.getElementById('g_defense_hits').value,
-        node_key:document.getElementById('g_nodekey').value.trim()};
+        auto_defense_hits:+document.getElementById('g_defense_hits').value};
 }
 function dbBody(){
     return {db_enabled:document.getElementById('db_en').checked?1:0,
@@ -631,7 +647,6 @@ async function loadGuard(){
         document.getElementById('g_int').value = g.interval;
         document.getElementById('g_defense').checked = !!g.auto_defense;
         document.getElementById('g_defense_hits').value = g.auto_defense_hits ?? 100;
-        document.getElementById('g_nodekey').value = g.node_key||'';
         document.getElementById('custom_ua').value = g.custom_ua||'';
         document.getElementById('tg_en').checked = !!g.tg_enabled;
         document.getElementById('tg_token').value = g.tg_token||'';

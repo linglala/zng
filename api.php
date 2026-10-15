@@ -7,7 +7,7 @@ require __DIR__ . '/guard.php';
 session_start();
 header('Content-Type: application/json; charset=utf-8');
 
-const SG_VERSION = '2.2.0';
+const SG_VERSION = '1.5.1';
 
 if (empty($_SESSION['subguard_ok'])) {
     http_response_code(403);
@@ -162,6 +162,15 @@ switch ($action) {
     case 'action_revert':
         echo json_encode(guard_revert((int)($_GET['id'] ?? 0)), JSON_UNESCAPED_UNICODE);
         break;
+
+    case 'node_alerts': {
+        $rows = [];
+        foreach (db()->query("SELECT datetime(ts,'unixepoch','localtime') t, email, detail FROM actions WHERE action = 'node_alert' ORDER BY ts DESC LIMIT 20") as $r) {
+            $rows[] = ['time' => $r['t'], 'email' => $r['email'], 'detail' => $r['detail']];
+        }
+        echo json_encode(['rows' => $rows], JSON_UNESCAPED_UNICODE);
+        break;
+    }
 
     default:
         http_response_code(400);
