@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# SubGuard 节点测活哨兵 v1.4（最终版）
+# SubGuard 节点测活哨兵 v1.5（指挥中心目击版）
 # 定位：纯探头。检测→报警→留痕，【永不直接锁人】。
 # 判定：hc>=3 且 other<=30（查IP为主） 或 hc>=2 且 other=0（纯探针）
 #       other>30 视为"营业中流量"，不报警（由订阅层引擎规则量刑）
@@ -54,17 +54,25 @@ echo "$SIZE" > "$OFFSET_FILE"
 
 # 3. 按 UUID 统计（兼容双格式；含 ipapi.co / ip4.ipip.net）
 NOW=$(date +%s)
-RESULTS=$(printf '%s\n' "$CHUNK" | perl -e '
-my %hc = my %other = my %ip = ();
-my $pat = qr/(?:^|\.)((?:api\.)?ipify\.org|ipwho\.is|(?:www\.|myip\.|ip4\.)?ipip\.net|ip-api\.com|ipinfo\.io|ifconfig\.(?:me|io)|icanhazip\.com|cip\.cc|ip\.sb|myip\.com|checkip\.dyndns\.org|test-ipv6\.com|ipapi\.co)/;
+RESULTS=$(printf '%s\n' "$CHUNK" | perl -e 'my %hc = my %other = my %ip = ();
+my %hct = my %cct = my %ccip = ();   # 指挥中心目击：查IP时刻 / 8899时刻 / 8899来源
+my $pat = qr/(?:^|\.)((?:api\.)?ipify\.org|ipwho\.is|(?:www\.|myip\.|ip4\.)?ipip\.net|ip-api\.com|ipinfo\.io|ifconfig\.(?:me|io|co)|icanhazip\.com|cip\.cc|ip\.sb|myip\.com|checkip\.dyndns\.org|test-ipv6\.com|ipapi\.co|jsonip\.com|ip\.gs|ip\.zxinc\.org|api\.nn\.ci)/;
 my $uuid_re = qr/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/;
 while (<STDIN>) {
   next unless /email: .*?$uuid_re/; my $u = lc($1);
-  my $from = /from (?:tcp:|udp:)?([0-9.]+):/ ? $1 : "?";
+  my $sec = -1;
+  if (/^(\S+?)[ T](\d{2}):(\d{2}):(\d{2})/) { $sec = $2*3600 + $3*60 + $4; }
+  my $from = /from (?:tcp:|udp:)?\[?([0-9a-fA-F:.]+)\]?:/ ? $1 : "?";
   $ip{$u}{$from}++;
+  if (/accepted (?:tcp|udp):8\.138\.80\.41:8899/i) {
+    if ($sec >= 0 && (!exists $cct{$u} || $sec < $cct{$u})) { $cct{$u} = $sec; }
+    $ccip{$u} //= $from;
+    next;
+  }
   if (/accepted (?:tcp|udp):([a-z0-9][a-z0-9.-]*?):/i) {
     my $d = lc($1);
-    if ($d =~ $pat) { $hc{$u}{$1}++ } else { $other{$u}++ }
+    if ($d =~ $pat) { $hc{$u}{$1}++; if ($sec >= 0 && (!exists $hct{$u} || $sec < $hct{$u})) { $hct{$u} = $sec; } }
+    else { $other{$u}++ }
   }
 }
 for my $u (sort keys %hc) {
@@ -73,11 +81,45 @@ for my $u (sort keys %hc) {
   my @ips = sort { $ip{$u}{$b} <=> $ip{$u}{$a} } keys %{$ip{$u}};
   printf "%s hc=%d other=%d topip=%s\n", $u, $nd, $no, ($ips[0] // "?");
 }
-')
+# 指挥中心目击：查IP与连8899间隔<=60秒 -> 最高级
+for my $u (sort keys %cct) {
+  next unless exists $hct{$u};
+  my $gap = abs($cct{$u} - $hct{$u});
+  if ($gap <= 60) {
+    my $nd = scalar keys %{$hc{$u} || {}};
+    printf "CC %s ccip=%s gap=%ds hc=%d\n", $u, ($ccip{$u} // "?"), $gap, $nd;
+  }
+}')
 
 # 4. 判定（other<=30 才报）+ 6h TG 降噪 + 双通道
 while IFS= read -r line; do
   [ -z "$line" ] && continue
+
+  # ===== 指挥中心目击（最高级，独立通道）=====
+  case "$line" in
+    "CC "*)
+      CUUID=$(echo "$line" | awk '{print $2}')
+      CCIP=$(echo "$line"  | sed -n 's/.*ccip=\([^ ]*\).*//p')
+      GAP=$(echo "$line"   | sed -n 's/.*gap=\([^ ]*\).*//p')
+      CCHC=$(echo "$line"  | sed -n 's/.*hc=\([0-9]*\).*//p')
+      NODE=$(hostname)
+      echo "$(date '+%F %T') node=$NODE CC-SIGHTING uuid=$CUUID ccip=$CCIP gap=$GAP" >> "$ALERT_LOG"
+      if [ -n "$HOOK_KEY" ] && [ "$HOOK_KEY" != "填NODE_HOOK密钥" ]; then
+        for hook in $HOOK_URLS; do
+          curl -s -m 10 -A "Mozilla/5.0" -X POST "$hook"             --data-urlencode "key=$HOOK_KEY" --data-urlencode "uuid=$CUUID"             --data-urlencode "node=${NODE}-CC目击" --data-urlencode "hc=$CCHC"             --data-urlencode "other=0" --data-urlencode "ip=$CCIP"             --data-urlencode "cc=1" --data-urlencode "ts=$NOW" > /dev/null
+        done
+      fi
+      if [ -n "$BOT_TOKEN" ] && [ "$BOT_TOKEN" != "填TG_BOT_TOKEN" ]; then
+        MSG="🚨🚨 <b>指挥中心目击（8.138.80.41:8899）</b>
+节点：$NODE
+UUID：$CUUID
+查IP后 ${GAP}s 内连指挥中心，来源：$CCIP"
+        curl -s -m 8 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage"           -d chat_id="$CHAT_ID" --data-urlencode text="$MSG" > /dev/null
+      fi
+      continue
+      ;;
+  esac
+
   UUID=$(echo "$line"   | awk '{print $1}')
   HC_N=$(echo "$line"   | sed -n 's/.*hc=\([0-9]*\).*/\1/p')
   OTHER=$(echo "$line"  | sed -n 's/.*other=\([0-9]*\).*/\1/p')

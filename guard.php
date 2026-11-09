@@ -74,6 +74,13 @@ function guard_config() {
         'auto_lock' => false, 'grace_hours' => 24,
         'auto_defense' => false, 'auto_defense_hits' => 100,
         'node_key' => '',
+        'rule_token_ips_action' => 'move',
+        'rule_abnormal_action' => 'move',
+        'rule_token_hits' => 0,
+        'rule_token_hits_action' => 'reset',
+        'rule_blip_action' => 'lock',
+        'rule_blemail_action' => 'lock',
+        'rule_node_alert_action' => 'dry',
     ];
     $j = state_get('guard_config');
     return $j ? array_merge($d, json_decode($j, true)) : $d;
@@ -152,6 +159,13 @@ function guard_punish($u, $token, $action, $reason) {
         db()->prepare('INSERT OR REPLACE INTO plan_locks VALUES(?,?,?,?)')->execute([(int)$u['id'], (int)$g['plan_quarantine'], '黑名单自动锁定：' . $reason, time()]);
         guard_log($u['id'], $u['email'], $token, 'lock', $detail . " ;新套餐={$g['plan_quarantine']}（已加入套餐锁名单）", guard_status());
         if (!$g['dry_run']) tg_send("🚫 <b>黑名单触发 · 蜜罐收押</b>\n👤 用户：<code>{$u['email']}</code>\n🎯 原因：{$reason}\n📊 状态：已第一时间打入蜜罐套餐#{$g['plan_quarantine']}并锁死");
+    } elseif ($action === 'reset') {
+        guard_exec("UPDATE {$pre}user SET token = ?, uuid = ? WHERE id = ?", [bin2hex(random_bytes(16)), uuid4(), $u['id']]);
+        guard_log($u['id'], $u['email'], $token, 'reset', $detail . ' ;token+UUID已重置', guard_status());
+        if (!$g['dry_run']) tg_send("♻️ <b>SubGuard 重置订阅</b>
+👤 用户：<code>{$u['email']}</code>
+🎯 原因：{$reason}
+🔑 token+UUID 已换新，旧订阅全部失效");
     } else {
         $gid = guard_plan_group($g['plan_quarantine']);
         guard_exec("UPDATE {$pre}user SET plan_id = ?, group_id = ? WHERE id = ?", [$g['plan_quarantine'], $gid, $u['id']]);
@@ -229,14 +243,20 @@ function guard_run($force = false) {
     $pdo = db();
     $today = time() - 86400;
     $candidates = [];
+    $cand_action = [];
 
     $st = $pdo->prepare("SELECT token, COUNT(*) c FROM events WHERE ts >= ? AND reason != '' GROUP BY token");
     $st->execute([$today]);
-    foreach ($st as $r) if ($r['c'] >= $g['rule_abnormal_hits']) $candidates[$r['token']] = "异常UA命中{$r['c']}次";
+    foreach ($st as $r) if ($r['c'] >= $g['rule_abnormal_hits']) { $candidates[$r['token']] = "异常UA命中{$r['c']}次"; $cand_action[$r['token']] = $g['rule_abnormal_action']; }
 
     $st = $pdo->prepare("SELECT token, COUNT(DISTINCT ip) ips FROM events WHERE ts >= ? AND ip NOT IN (SELECT ip FROM wl_ips) GROUP BY token");
     $st->execute([$today]);
-    foreach ($st as $r) if ($r['ips'] >= $g['rule_token_ips'] && !isset($candidates[$r['token']])) $candidates[$r['token']] = "独立IP {$r['ips']} 个";
+    foreach ($st as $r) if ($r['ips'] >= $g['rule_token_ips'] && !isset($candidates[$r['token']])) { $candidates[$r['token']] = "独立IP {$r['ips']} 个"; $cand_action[$r['token']] = $g['rule_token_ips_action']; }
+    if (!empty($g['rule_token_hits'])) {   // 规则③：24h 拉取总量（PHP侧过滤，规避HAVING绑定坑）
+        $st2 = $pdo->prepare("SELECT token, COUNT(*) c FROM events WHERE ts >= ? GROUP BY token");
+        $st2->execute([$today]);
+        foreach ($st2 as $r) if ($r['c'] >= $g['rule_token_hits'] && !isset($candidates[$r['token']])) { $candidates[$r['token']] = "24h拉取{$r['c']}次"; $cand_action[$r['token']] = $g['rule_token_hits_action']; }
+    }
 
     $st = $pdo->prepare("SELECT DISTINCT e.token FROM events e JOIN bl_tokens b ON b.token = e.token WHERE e.ts >= ?");
     $st->execute([$today]);
@@ -258,7 +278,7 @@ function guard_run($force = false) {
             if ($l === false) continue;
             foreach ($bip_ranges as $br) {
                 if (($l & $br[1]) === ($br[0] & $br[1])) {
-                    if (!isset($candidates[$r['token']])) $candidates[$r['token']] = '命中IP黑名单(' . $r['ip'] . ')';
+                    if (!isset($candidates[$r['token']])) $candidates[$r['token']] = '命中IP黑名单(' . $r['ip'] . ')'; $cand_action[$r['token']] = $g['rule_blip_action'];
                     break;
                 }
             }
@@ -280,11 +300,13 @@ function guard_run($force = false) {
         $b = $pdo->prepare('SELECT 1 FROM bl_accounts WHERE email = ?');
         $b->execute([$u['email']]);
         if ($b->fetchColumn()) {
-            guard_punish($u, $token, 'lock', '命中账号黑名单');
+            guard_punish($u, $token, $g['rule_blemail_action'], '命中账号黑名单');
             $g['dry_run'] ? $dry++ : $done++;
             continue;
         }
-        if (strpos($reason, '黑名单') !== false) {
+        if (isset($cand_action[$token])) {
+            guard_punish($u, $token, $cand_action[$token], $reason);
+        } elseif (strpos($reason, '黑名单') !== false) {
             guard_punish($u, $token, 'lock', $reason);
         } elseif ($g['plan_quarantine'] > 0) {
             guard_punish($u, $token, 'move', $reason);

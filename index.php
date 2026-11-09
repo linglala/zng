@@ -386,13 +386,19 @@ label.ck{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-s
     <div class="card">
         <b>处置规则</b><br><br>
         蜜罐套餐ID <input type="number" id="g_plan" style="width:90px">　
-        
-        移套餐阈值（异常UA≥） <input type="number" id="g_abn" style="width:80px">　
-        移套餐阈值（IP≥） <input type="number" id="g_ips" style="width:70px">　
-        执行间隔（秒） <input type="number" id="g_int" style="width:80px">　
-        <label class="ck"><input type="checkbox" id="g_defense"> 自动防御</label>
-        单IP≥ <input type="number" id="g_defense_hits" style="width:70px"> 次/24h<br><br>
-        <span style="font-size:12px;color:var(--sub)">自动防御开启后：高频 IP 自动拉黑 + 其触碰的订阅全部重置（UUID+token）+ TG 通知。白名单内的 IP/用户豁免。误伤成本高，建议配合白名单使用。</span><br><br>
+        执行间隔（秒） <input type="number" id="g_int" style="width:80px"><br><br>
+        <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="color:var(--sub)"><th style="text-align:left;padding:4px 8px">规则</th><th style="text-align:left;padding:4px 8px">阈值</th><th style="text-align:left;padding:4px 8px">达到阈值处置</th></tr></thead><tbody>
+        <tr><td style="padding:4px 8px">① 异常 UA（24h 命中≥）</td><td style="padding:4px 8px"><input type="number" id="g_abn" style="width:80px"></td><td style="padding:4px 8px"><select id="g_abn_act"><option value="move">移入蜜罐套餐</option><option value="lock">蜜罐+套餐锁</option><option value="reset">仅重置token+UUID</option></select></td></tr>
+        <tr><td style="padding:4px 8px">② 独立 IP（24h 不同IP≥）</td><td style="padding:4px 8px"><input type="number" id="g_ips" style="width:80px"></td><td style="padding:4px 8px"><select id="g_ips_act"><option value="move">移入蜜罐套餐</option><option value="lock">蜜罐+套餐锁</option><option value="reset">仅重置token+UUID</option></select></td></tr>
+        <tr><td style="padding:4px 8px">③ 拉取总量（24h 次数≥）</td><td style="padding:4px 8px"><input type="number" id="g_hits" style="width:80px">（0=关）</td><td style="padding:4px 8px"><select id="g_hits_act"><option value="move">移入蜜罐套餐</option><option value="lock">蜜罐+套餐锁</option><option value="reset">仅重置token+UUID</option></select></td></tr>
+        <tr><td style="padding:4px 8px">④ 命中 IP 黑名单</td><td style="padding:4px 8px;color:var(--sub)">—</td><td style="padding:4px 8px"><select id="g_blip_act"><option value="move">移入蜜罐套餐</option><option value="lock">蜜罐+套餐锁</option><option value="reset">仅重置token+UUID</option></select></td></tr>
+        <tr><td style="padding:4px 8px">⑤ 命中邮箱黑名单</td><td style="padding:4px 8px;color:var(--sub)">—</td><td style="padding:4px 8px"><select id="g_blemail_act"><option value="move">移入蜜罐套餐</option><option value="lock">蜜罐+套餐锁</option><option value="reset">仅重置token+UUID</option></select></td></tr>
+        <tr><td style="padding:4px 8px">⑥ 节点哨兵警报</td><td style="padding:4px 8px;color:var(--sub)">—（检测在哨兵脚本）</td><td style="padding:4px 8px"><select id="g_nalert_act"><option value="dry">仅记录观察</option><option value="move">移入蜜罐套餐</option><option value="lock">蜜罐+套餐锁</option><option value="reset">仅重置token+UUID</option></select></td></tr>
+        <tr><td style="padding:4px 8px;color:var(--sub)">自动防御（单IP 24h≥，慎用）</td><td style="padding:4px 8px"><label class="ck"><input type="checkbox" id="g_defense"> 启用</label> <input type="number" id="g_defense_hits" style="width:70px"> 次</td><td style="padding:4px 8px;color:var(--sub)">固定：拉黑IP+重置其触碰的token</td></tr>
+        </tbody></table>
+        <br><span style="font-size:12px;color:var(--sub)">① 抓伪装工具UA ② 抓转售共享（推荐5+重置） ③ 抓脚本高频（0=关） ④⑤ 命中即处置 ⑥ 哨兵警报处置。Token黑名单固定收押。"仅重置"不挪套餐只换钥匙。</span><br><br>
+        <b>节点哨兵</b>　密钥 <input id="g_nodekey" style="width:230px">　<button class="btn2" type="button" onclick="document.getElementById('g_nodekey').value=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('')">随机生成</button><br>
+        <span style="font-size:12px;color:var(--sub)">哨兵与 node_hook.php 对暗号用。jk/tk 两站同一把；留空=关闭节点警报接口。</span><br><br>
         <button class="btn2 pri" onclick="saveRules()">保存规则</button>
         <span id="rules_msg" style="font-size:12px;color:var(--sub)"></span>
     </div>
@@ -518,12 +524,12 @@ async function load(manual){
 async function loadNodeAlerts(){
     try{
         const d = await fetch('api.php?action=node_alerts').then(x=>x.json());
-        const oc = {locked:'🔒 已收押', dry:'👀 观察模式', quarantined:'📦 蜜罐内续测', banned:'🚫 封禁内续测'};
-        const cl = {locked:'blue', dry:'green', quarantined:'orange', banned:'orange'};
+        const oc = {locked:'🔒 已收押', dry:'👀 观察模式', quarantined:'📦 蜜罐内续测', banned:'🚫 封禁内续测', reset:'♻️ 已重置', move:'🎯 打入蜜罐', lock:'🚫 收押'};
+        const cl = {locked:'blue', dry:'green', quarantined:'orange', banned:'orange', reset:'green', move:'blue', lock:'orange'};
         document.getElementById('nodealerts').innerHTML = (d.rows && d.rows.length) ? d.rows.map(r=>{
             let o = {}; try{ o = JSON.parse(r.detail || '{}'); }catch(e){}
             return `<tr><td class="mono">${r.time}</td><td>${esc(o.node||'-')}</td><td>${esc(r.email||'-')}</td><td>${o.hc??'-'} 种</td><td>${o.other??'-'}</td><td class="mono">${esc(o.ip||'-')}</td><td><span class="pill ${cl[o.outcome]||''}">${oc[o.outcome]||esc(o.outcome||'-')}</span></td></tr>`;
-        }).join('') : '<tr><td colspan="7" class="empty">暂无节点测活警报 🎉</td></tr>';
+        }).join('') : '<tr><td colspan="7" class="empty">暂无节点测活警报</td></tr>';
     }catch(e){ document.getElementById('nodealerts').innerHTML = '<tr><td colspan="7" class="empty">加载失败</td></tr>'; }
 }
 
@@ -623,7 +629,15 @@ function collectGuardCfg(){
         tg_token:document.getElementById('tg_token').value,
         tg_chatid:document.getElementById('tg_chatid').value,
         auto_defense:document.getElementById('g_defense').checked?1:0,
-        auto_defense_hits:+document.getElementById('g_defense_hits').value};
+        auto_defense_hits:+document.getElementById('g_defense_hits').value,
+        rule_abnormal_action:document.getElementById('g_abn_act').value,
+        rule_token_ips_action:document.getElementById('g_ips_act').value,
+        rule_token_hits:+document.getElementById('g_hits').value,
+        rule_token_hits_action:document.getElementById('g_hits_act').value,
+        rule_blip_action:document.getElementById('g_blip_act').value,
+        rule_blemail_action:document.getElementById('g_blemail_act').value,
+        rule_node_alert_action:document.getElementById('g_nalert_act').value,
+        node_key:document.getElementById('g_nodekey').value.trim()};
 }
 function dbBody(){
     return {db_enabled:document.getElementById('db_en').checked?1:0,
@@ -647,6 +661,14 @@ async function loadGuard(){
         document.getElementById('g_int').value = g.interval;
         document.getElementById('g_defense').checked = !!g.auto_defense;
         document.getElementById('g_defense_hits').value = g.auto_defense_hits ?? 100;
+        document.getElementById('g_abn_act').value = g.rule_abnormal_action||'move';
+        document.getElementById('g_ips_act').value = g.rule_token_ips_action||'move';
+        document.getElementById('g_hits').value = g.rule_token_hits ?? 0;
+        document.getElementById('g_hits_act').value = g.rule_token_hits_action||'reset';
+        document.getElementById('g_blip_act').value = g.rule_blip_action||'lock';
+        document.getElementById('g_blemail_act').value = g.rule_blemail_action||'lock';
+        document.getElementById('g_nalert_act').value = g.rule_node_alert_action||'dry';
+        document.getElementById('g_nodekey').value = g.node_key||'';
         document.getElementById('custom_ua').value = g.custom_ua||'';
         document.getElementById('tg_en').checked = !!g.tg_enabled;
         document.getElementById('tg_token').value = g.tg_token||'';
@@ -852,7 +874,7 @@ async function lockDel(uid){
     if(!confirm('解锁 #'+uid+' ？\n将同时：恢复原套餐 + 加入白名单（不再自动锁定）。')) return;
     await fetch('api.php?action=lock_del&user_id='+uid); locksLoad();
 }
-const ACT_NAME = {ban:'封禁', move:'打入蜜罐', plan_lock:'蜜罐拉回', lock:'黑名单收押', defense:'自动防御'};
+const ACT_NAME = {ban:'封禁', move:'打入蜜罐', plan_lock:'蜜罐拉回', lock:'黑名单收押', defense:'自动防御', reset:'重置订阅'};
 const ACT_CLS = {ban:'red', move:'orange', plan_lock:'blue', lock:'red', defense:'red'};
 let actPage = 1, actTotalPages = 1;
 async function actionsSearch(){ actPage = 1; actionsLoad(); }

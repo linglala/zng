@@ -1,4 +1,17 @@
-zng 仓库补丁 v2.2.1（V2bX 自动开日志版）
-install_node_sentinel.sh v1.3：自动探测 /etc/V2bX|/etc/v2bx → 开 info → 注入 AccessPath → JSON校验 → 重启 → 幂等
-node_sentinel.sh v1.3：双格式解析 + 300MB 自清
-guard.php / index.php 手术版 / node_hook.php v1.2 / lock_by_uuid.php v1.1 / engine.php
+zng 仓库终局同步包 2026-11-09
+=====================================
+仓库原状：站点代码 v2.2.6 时代 + 哨兵 v1.3（v2.2.7/v2.2.8/v1.5 全部未回库）
+
+本包含 4 个文件，覆盖后仓库 = 线上完全体：
+  guard.php        v2.2.7+rule②修复版（cand_action×7 含规则②赋值，
+                   HAVING绑定坑已修，reset分支，8个动作配置键）
+  index.php        v2.2.8（总览节点测活卡片 + 六规则表格含⑥哨兵
+                   + 哨兵密钥框，11项标记验证全过）
+  node_hook.php    v1.4（rule_node_alert_action 四种处置可配）
+  node_sentinel.sh v1.5（18家查IP域名 + 指挥中心目击检测 8899）
+
+不需动：api.php（仓库已最新）/ lib.php / scan.php / engine.php /
+        lock_by_uuid.php / install_node_sentinel.sh / TUNNEL.md /
+        config.example.php / README.md / LICENSE
+
+推送：解压到仓库目录 → git add -A → commit → push
